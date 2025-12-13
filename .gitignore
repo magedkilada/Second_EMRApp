@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific files (never commit)
+xcuserdata/
+*.xcuserstate
+
+# Build artifacts
+DerivedData/
+.build/
