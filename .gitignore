@@ -9,3 +9,5 @@ xcuserdata/
 DerivedData/
 .build/
 Second_EMRApp.xcodeproj/project.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcuserstate
