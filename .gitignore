@@ -11,3 +11,7 @@ DerivedData/
 Second_EMRApp.xcodeproj/project.xcworkspace/xcuserdata/
 xcuserdata/
 *.xcuserstate
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
