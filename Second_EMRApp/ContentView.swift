@@ -1,23 +1,24 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
+import UIKit
 
 struct ContentView: View {
 
     // MARK: - Stores
     @StateObject private var store = EMRStore()
-    @StateObject private var physicianStore = PhysiciansStore()
-    @StateObject private var backupCenter = BackupCenter()
-    @State private var showPhysicianCardExpanded: Bool = false
-    @State private var showBackupExpanded: Bool = false
+    @StateObject private var physicians = PhysiciansStore()
 
     // MARK: - UI State
-    @State private var searchText: String = ""
+    @State private var selectedPatientID: UUID?
     @State private var tab: WorkspaceTab = .demographics
 
-    @State private var showPhysiciansManager = false
-    @State private var showRestoreConfirm = false
-    @State private var showBackupDone = false
+    // MARK: - Import State
+    @State private var importingCategory: Attachment.Category = .medicalReport
+    @State private var showFileImporter: Bool = false
 
-    @State private var confirmDeletePatientID: UUID? = nil
+    @State private var showPhotoPicker: Bool = false
+    @State private var pickedPhoto: PhotosPickerItem? = nil
 
     enum WorkspaceTab: String, CaseIterable, Identifiable {
         case demographics = "Demographics"
@@ -25,116 +26,119 @@ struct ContentView: View {
         var id: String { rawValue }
     }
 
+    private var visiblePatients: [Patient] {
+        store.patients.filter { !$0.isDeleted }
+    }
+
     var body: some View {
         NavigationSplitView {
             sidebar
         } detail: {
-            detailPane
+            detail
         }
         .onAppear {
-            if store.selectedPatientID == nil {
-                store.selectedPatientID = store.patients.first(where: { !$0.isDeleted })?.id
+            if selectedPatientID == nil {
+                selectedPatientID = visiblePatients.first?.id
             }
-            backupCenter.configureIfNeeded()
         }
-        .sheet(isPresented: $showPhysiciansManager) {
-            PhysiciansManagerView()
-                .environmentObject(physicianStore)
-        }
-        .alert("Delete patient?", isPresented: Binding(
-            get: { confirmDeletePatientID != nil },
-            set: { if !$0 { confirmDeletePatientID = nil } }
-        )) {
-            Button("Delete", role: .destructive) {
-                if let id = confirmDeletePatientID {
-                    store.deletePatient(id: id)
-                    if store.selectedPatientID == id {
-                        store.selectedPatientID = store.patients.first(where: { !$0.isDeleted })?.id
-                    }
-                }
-                confirmDeletePatientID = nil
+        // FILE IMPORTER (category already chosen from menu)
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let patientID = selectedPatientID else { return }
+
+            if case .success(let urls) = result, let url = urls.first {
+                _ = store.importFile(
+                    patientID: patientID,
+                    category: importingCategory,
+                    sourceURL: url
+                )
             }
-            Button("Cancel", role: .cancel) { confirmDeletePatientID = nil }
-        } message: {
-            Text("This will permanently delete this patient.")
         }
-        .alert("Restore backup?", isPresented: $showRestoreConfirm) {
-            Button("Restore", role: .destructive) {
-                if let restored = backupCenter.restoreLatest() {
-                    store.patients = restored
-                    store.selectedPatientID = restored.first(where: { !$0.isDeleted })?.id
-                    tab = .demographics
-                }
+        // PHOTO PICKER (category already chosen from menu)
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $pickedPhoto,
+            matching: .images
+        )
+        .onChange(of: pickedPhoto) { _, newItem in
+            guard let patientID = selectedPatientID else { return }
+            guard let newItem else { return }
+
+            Task {
+                await importPickedPhoto(newItem, patientID: patientID, category: importingCategory)
+                await MainActor.run { pickedPhoto = nil }
             }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("This will replace your current patients list with the backup data.")
-        }
-        .alert("Backup complete", isPresented: $showBackupDone) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("Your encrypted patients backup was saved.")
         }
     }
 
     // MARK: - Sidebar
     private var sidebar: some View {
-        List {
-            ForEach(filteredPatients) { p in
-                Button {
-                    store.selectedPatientID = p.id
-                    tab = .demographics   // ✅ always show Demographics after selecting a patient
-                } label: {
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(displayName(for: p))
-                                .font(.headline)
+        List(visiblePatients, selection: $selectedPatientID) { patient in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(patient.nameEnglish.isEmpty ? "Unnamed (English)" : patient.nameEnglish)
+                    .font(.headline)
 
-                            if !p.mrn.isEmpty {
-                                Text("MRN: \(p.mrn)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-
-                        if store.selectedPatientID == p.id {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button(role: .destructive) {
-                        confirmDeletePatientID = p.id
-                    } label: {
-                        Label("Delete Patient", systemImage: "trash")
-                    }
+                if !patient.mrn.isEmpty {
+                    Text("MRN: \(patient.mrn)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
+            .tag(patient.id)
         }
         .navigationTitle("Patients")
-        .searchable(text: $searchText, placement: .sidebar, prompt: "Search name / MRN / phone")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    store.addNewPatient()
-                    tab = .demographics
-                } label: {
-                    Label("Add Patient", systemImage: "plus")
-                }
+            Button {
+                var p = Patient()
+                p.createdAt = Date()
+                p.updatedAt = Date()
+                store.patients.insert(p, at: 0)
+                selectedPatientID = p.id
+            } label: {
+                Label("Add Patient", systemImage: "plus")
             }
+        }
+        .toolbar {
+            Menu {
+                // ✅ Import FILE submenu (shows categories)
+                Menu("Import File…") {
+                    ForEach(Attachment.Category.allCases) { cat in
+                        Button(cat.rawValue) {
+                            importingCategory = cat
+                            showFileImporter = true
+                        }
+                    }
+                }
+
+                // ✅ Import PHOTO submenu (shows categories)
+                Menu("Import Photo…") {
+                    ForEach(Attachment.Category.allCases) { cat in
+                        Button(cat.rawValue) {
+                            importingCategory = cat
+                            showPhotoPicker = true
+                        }
+                    }
+                }
+            } label: {
+                Label("Import", systemImage: "paperclip")
+            }
+            .disabled(selectedPatientID == nil)
         }
     }
 
     // MARK: - Detail
-    private var detailPane: some View {
-        NavigationStack {
-            if let id = store.selectedPatientID,
-               let patientBinding = store.patientBinding(for: id) {
+    private var detail: some View {
+        Group {
+            if let id = selectedPatientID,
+               let index = store.patients.firstIndex(where: { $0.id == id }) {
+
+                let patientBinding = Binding<Patient>(
+                    get: { store.patients[index] },
+                    set: { store.patients[index] = $0 }
+                )
 
                 VStack(spacing: 8) {
 
@@ -144,97 +148,24 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                    .padding()
 
                     switch tab {
-
                     case .demographics:
-                        VStack(spacing: 6) {
-
-                            // Collapsible Attending Physician
-                            DisclosureGroup(
-                                isExpanded: $showPhysicianCardExpanded,
-                                content: {
-                                    AttendingPhysicianCard(onManage: {
-                                        showPhysiciansManager = true
-                                    })
-                                    .environmentObject(physicianStore)
-                                    .padding(.top, 4)
-                                },
-                                label: {
-                                    HStack {
-                                        Text("Attending Physician")
-                                            .font(.subheadline).bold()
-                                        Spacer()
-                                        Image(systemName: showPhysicianCardExpanded ? "chevron.up" : "chevron.down")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            )
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                            .padding(.horizontal, 12)
-
-                            // Collapsible Backup
-                            DisclosureGroup(
-                                isExpanded: $showBackupExpanded,
-                                content: {
-                                    BackupInlineCard(
-                                        onBackupNow: {
-                                            backupCenter.configureIfNeeded()
-                                            backupCenter.backupNow(patients: store.patients)
-                                            if backupCenter.lastErrorMessage == nil { showBackupDone = true }
-                                        },
-                                        onRestore: { showRestoreConfirm = true }
-                                    )
-                                    .environmentObject(backupCenter)
-                                    .padding(.top, 4)
-                                },
-                                label: {
-                                    HStack {
-                                        Text("Backup")
-                                            .font(.subheadline).bold()
-                                        Spacer()
-                                        Image(systemName: showBackupExpanded ? "chevron.up" : "chevron.down")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            )
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                            .padding(.horizontal, 12)
-
-                            // Full Demographics form (normal, fast entry)
-                            PatientDemographicsView(
-                                patient: patientBinding,
-                                onSave: { store.savePatient(id: id) },
-                                onRequestDelete: { confirmDeletePatientID = id }
-                            )
-                            .safeAreaInset(edge: .bottom) {
-                                HStack(spacing: 10) {
-                                    Button { store.savePatient(id: id) } label: {
-                                        Label("Save", systemImage: "checkmark.circle.fill")
-                                    }
-                                    .buttonStyle(.borderedProminent)
-
-                                    Button(role: .destructive) { confirmDeletePatientID = id } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(.ultraThinMaterial)
-                            }
-                        }
+                        PatientDemographicsView(
+                            patient: patientBinding,
+                            onSave: {
+                                store.patients[index].updatedAt = Date()
+                            },
+                            onRequestDelete: { }
+                        )
 
                     case .records:
-                        RecordsWorkspaceView()
+                        RecordsWorkspaceView(
+                            store: store,
+                            patientID: id,
+                            patient: store.patients[index]   // VALUE, not Binding
+                        )
                     }
                 }
                 .navigationTitle(tab.rawValue)
@@ -244,29 +175,52 @@ struct ContentView: View {
                 ContentUnavailableView(
                     "No Patient Selected",
                     systemImage: "person.text.rectangle",
-                    description: Text("Add a patient, then select them from the list.")
+                    description: Text("Add or select a patient")
                 )
-                .navigationTitle("Demographics")
-                .navigationBarTitleDisplayMode(.inline)
             }
         }
     }
-    // MARK: - Helpers
-    private func displayName(for p: Patient) -> String {
-        let n = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty ? "Unnamed (English)" : n
+
+    // MARK: - Photo Import (Category-aware)
+    @MainActor
+    private func importPickedPhoto(_ item: PhotosPickerItem, patientID: UUID, category: Attachment.Category) async {
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else { return }
+
+            // Convert to JPEG for predictable preview/QuickLook behavior
+            let jpegData: Data
+            if let image = UIImage(data: data),
+               let jpg = image.jpegData(compressionQuality: 0.9) {
+                jpegData = jpg
+            } else {
+                // fallback: save original bytes (rare)
+                jpegData = data
+            }
+
+            let fileName = "\(UUID().uuidString).jpg"
+            let dir = attachmentsDir(for: patientID)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+            let dstURL = dir.appendingPathComponent(fileName)
+            try jpegData.write(to: dstURL, options: .atomic)
+
+            let att = Attachment(
+                patientID: patientID,
+                category: category,
+                originalFileName: fileName,
+                storedFileName: fileName
+            )
+            store.attachments.append(att)
+        } catch {
+            // Optional: you can surface an alert using store.lastErrorMessage if you have it.
+            // store.lastErrorMessage = error.localizedDescription
+        }
     }
 
-    private var filteredPatients: [Patient] {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let alive = store.patients.filter { !$0.isDeleted }
-        guard !q.isEmpty else { return alive }
-
-        return alive.filter { p in
-            p.nameEnglish.lowercased().contains(q) ||
-            p.nameArabic.lowercased().contains(q) ||
-            p.mrn.lowercased().contains(q) ||
-            p.phone.lowercased().contains(q)
-        }
+    private func attachmentsDir(for patientID: UUID) -> URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs
+            .appendingPathComponent("Attachments", isDirectory: true)
+            .appendingPathComponent(patientID.uuidString, isDirectory: true)
     }
 }

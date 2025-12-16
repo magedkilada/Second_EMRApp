@@ -9,6 +9,11 @@ struct Physician: Identifiable, Codable, Hashable {
     var name: String
     var specialty: String
     var clinic: String
+
+    // ✅ ADD THIS
+    var fullName: String {
+        name
+    }
 }
 
 // MARK: - Store
@@ -18,6 +23,16 @@ final class PhysiciansStore: ObservableObject {
 
     @Published var physicians: [Physician] = []
     @Published var selectedPhysicianID: UUID? = nil
+    // Put this inside PhysiciansStore class (below @Published vars)
+    public var selectedPhysicianName: String? {
+        physicians.first(where: { $0.id == selectedPhysicianID })?.name
+    }
+    public var selectedPhysicianDisplay: String {
+        guard let p = physicians.first(where: { $0.id == selectedPhysicianID }) else { return "—" }
+        return p.specialty.isEmpty ? p.name : "\(p.name) • \(p.specialty)"
+    }
+    
+    
 
     private let physiciansKey = "physicians.json"
     private let selectedIDKey = "physician.selectedID"

@@ -5,11 +5,21 @@ struct PatientDemographicsView: View {
     let onSave: () -> Void
     let onRequestDelete: () -> Void
 
+    // ✅ must be INSIDE the struct (so it can see `patient`)
+    private var ageText: String {
+        let cal = Calendar.current
+        let now = Date()
+        let comps = cal.dateComponents([.year, .month], from: patient.dob, to: now)
+        let y = max(0, comps.year ?? 0)
+        let m = max(0, comps.month ?? 0)
+        return "\(y) years \(m) months"
+    }
+
     var body: some View {
         Form {
 
             Section("Name") {
-                TextField("Name (English)", text: $patient.nameEnglish)
+                TextField("Name (English) *", text: $patient.nameEnglish)
                 TextField("Name (Arabic)", text: $patient.nameArabic)
             }
 
@@ -18,12 +28,22 @@ struct PatientDemographicsView: View {
                     .onChange(of: patient.dob) { _, newValue in
                         patient.dob = min(newValue, Date())
                     }
+
+                HStack {
+                    Text("Age")
+                    Spacer()
+                    Text(ageText)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Sex") {
-                // Replace with your actual Picker when model is wired
-                Text("Sex field pending model link")
-                    .foregroundStyle(.secondary)
+                Picker("Sex", selection: $patient.gender) {
+                    ForEach(Gender.allCases) { g in
+                        Text(g.rawValue).tag(g)
+                    }
+                }
+                .pickerStyle(.segmented)
             }
 
             Section("Identifiers") {
@@ -56,10 +76,19 @@ struct PatientDemographicsView: View {
                 TextField("Email", text: $patient.email)
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
             }
 
-            Section(footer: Text("Required: Name (English), DOB (not future), Phone.")) {
-                EmptyView()
+            Section {
+                Button { onSave() } label: {
+                    Label("Save Patient", systemImage: "checkmark.circle")
+                }
+
+                Button(role: .destructive) { onRequestDelete() } label: {
+                    Label("Delete Patient", systemImage: "trash")
+                }
+            } footer: {
+                Text("Required: Name (English), DOB (not future), Phone.")
             }
         }
     }
