@@ -23,6 +23,7 @@ struct ContentView: View {
     enum WorkspaceTab: String, CaseIterable, Identifiable {
         case demographics = "Demographics"
         case records = "Medical Records"
+        case referencesAI = "References + AI"
         var id: String { rawValue }
     }
 
@@ -158,6 +159,11 @@ struct ContentView: View {
                                 store.patients[index].updatedAt = Date()
                             },
                             onRequestDelete: { }
+                        )
+                    case .referencesAI:
+                        ReferencesAIHubView(
+                            store: store,
+                            selectedPatientID: selectedPatientID
                         )
 
                     case .records:
