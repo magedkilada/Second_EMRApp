@@ -59,6 +59,7 @@ public final class EMRStore: ObservableObject {
         }
         return dir
     }
+    
 
     // MARK: - Patients API
 

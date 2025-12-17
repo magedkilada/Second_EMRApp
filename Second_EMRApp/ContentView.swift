@@ -1,147 +1,134 @@
 import SwiftUI
-import PhotosUI
-import UniformTypeIdentifiers
 import UIKit
 
 struct ContentView: View {
-
+    
     // MARK: - Stores
     @StateObject private var store = EMRStore()
     @StateObject private var physicians = PhysiciansStore()
-
+    @StateObject private var backupCenter = BackupCenter()
+    
     // MARK: - UI State
-    @State private var selectedPatientID: UUID?
+    @State private var searchText = ""
     @State private var tab: WorkspaceTab = .demographics
-
-    // MARK: - Import State
-    @State private var importingCategory: Attachment.Category = .medicalReport
-    @State private var showFileImporter: Bool = false
-
-    @State private var showPhotoPicker: Bool = false
-    @State private var pickedPhoto: PhotosPickerItem? = nil
-
+    @State private var showPhysiciansManager = false
+    @State private var confirmDeleteID: UUID?
+    
     enum WorkspaceTab: String, CaseIterable, Identifiable {
         case demographics = "Demographics"
         case records = "Medical Records"
-        case referencesAI = "References + AI"
         var id: String { rawValue }
     }
-
-    private var visiblePatients: [Patient] {
-        store.patients.filter { !$0.isDeleted }
-    }
-
+    
     var body: some View {
         NavigationSplitView {
             sidebar
         } detail: {
             detail
         }
-        .onAppear {
-            if selectedPatientID == nil {
-                selectedPatientID = visiblePatients.first?.id
+        .environmentObject(store)
+        .environmentObject(physicians)
+        .environmentObject(backupCenter)
+        .sheet(isPresented: $showPhysiciansManager) {
+            NavigationStack {
+                PhysiciansManagerView()
+                    .environmentObject(physicians)
+                    .navigationTitle("Physicians")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showPhysiciansManager = false }
+                        }
+                    }
             }
         }
-        // FILE IMPORTER (category already chosen from menu)
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: false
-        ) { result in
-            guard let patientID = selectedPatientID else { return }
-
-            if case .success(let urls) = result, let url = urls.first {
-                _ = store.importFile(
-                    patientID: patientID,
-                    category: importingCategory,
-                    sourceURL: url
-                )
+        .alert("Delete Patient?", isPresented: Binding(
+            get: { confirmDeleteID != nil },
+            set: { if !$0 { confirmDeleteID = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { confirmDeleteID = nil }
+            Button("Delete", role: .destructive) {
+                if let id = confirmDeleteID {
+                    store.softDeletePatient(id)
+                }
+                confirmDeleteID = nil
             }
-        }
-        // PHOTO PICKER (category already chosen from menu)
-        .photosPicker(
-            isPresented: $showPhotoPicker,
-            selection: $pickedPhoto,
-            matching: .images
-        )
-        .onChange(of: pickedPhoto) { _, newItem in
-            guard let patientID = selectedPatientID else { return }
-            guard let newItem else { return }
-
-            Task {
-                await importPickedPhoto(newItem, patientID: patientID, category: importingCategory)
-                await MainActor.run { pickedPhoto = nil }
-            }
+        } message: {
+            Text("This patient will be removed from the active list.")
         }
     }
-
+    
     // MARK: - Sidebar
+    
     private var sidebar: some View {
-        List(visiblePatients, selection: $selectedPatientID) { patient in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(patient.nameEnglish.isEmpty ? "Unnamed (English)" : patient.nameEnglish)
-                    .font(.headline)
-
-                if !patient.mrn.isEmpty {
-                    Text("MRN: \(patient.mrn)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        NavigationStack {
+            VStack(spacing: 12) {
+                
+                AttendingPhysicianCard {
+                    showPhysiciansManager = true
                 }
-            }
-            .tag(patient.id)
-        }
-        .navigationTitle("Patients")
-        .toolbar {
-            Button {
-                var p = Patient()
-                p.createdAt = Date()
-                p.updatedAt = Date()
-                store.patients.insert(p, at: 0)
-                selectedPatientID = p.id
-            } label: {
-                Label("Add Patient", systemImage: "plus")
-            }
-        }
-        .toolbar {
-            Menu {
-                // ✅ Import FILE submenu (shows categories)
-                Menu("Import File…") {
-                    ForEach(Attachment.Category.allCases) { cat in
-                        Button(cat.rawValue) {
-                            importingCategory = cat
-                            showFileImporter = true
+                
+                BackupInlineCard(
+                    onBackupNow: {
+                        backupCenter.backupNow(patients: store.patients)
+                    },
+                    onRestore: {
+                        if let restored = backupCenter.restoreLatest() {
+                            store.patients = restored
+                            store.selectedPatientID = restored.first(where: { !$0.isDeleted })?.id
+                        }
+                    }
+                )
+                
+                List {
+                    Section("Patients") {
+                        ForEach(activePatients) { p in
+                            Button {
+                                store.selectedPatientID = p.id
+                                tab = .demographics
+                            } label: {
+                                HStack {
+                                    Text(p.nameEnglish.isEmpty ? "Unnamed" : p.nameEnglish)
+                                    Spacer()
+                                    if store.selectedPatientID == p.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    confirmDeleteID = p.id
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
+                        
+                        Button {
+                            store.addNewPatient()
+                            tab = .demographics
+                        } label: {
+                            Label("Add Patient", systemImage: "person.badge.plus")
                         }
                     }
                 }
-
-                // ✅ Import PHOTO submenu (shows categories)
-                Menu("Import Photo…") {
-                    ForEach(Attachment.Category.allCases) { cat in
-                        Button(cat.rawValue) {
-                            importingCategory = cat
-                            showPhotoPicker = true
-                        }
-                    }
-                }
-            } label: {
-                Label("Import", systemImage: "paperclip")
+                .listStyle(.insetGrouped)
             }
-            .disabled(selectedPatientID == nil)
+            .navigationTitle("Neurosurgery EMR")
+            .searchable(text: $searchText)
         }
     }
-
+    
+    private var activePatients: [Patient] {
+        store.patients.filter { !$0.isDeleted }
+    }
+    
     // MARK: - Detail
+    
     private var detail: some View {
         Group {
-            if let id = selectedPatientID,
-               let index = store.patients.firstIndex(where: { $0.id == id }) {
+            if let index = selectedPatientIndex {
 
-                let patientBinding = Binding<Patient>(
-                    get: { store.patients[index] },
-                    set: { store.patients[index] = $0 }
-                )
-
-                VStack(spacing: 8) {
+                VStack(spacing: 12) {
 
                     Picker("", selection: $tab) {
                         ForEach(WorkspaceTab.allCases) { t in
@@ -149,84 +136,52 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .padding()
+                    .padding(.top, 4)
+                    .zIndex(1)
 
-                    switch tab {
-                    case .demographics:
-                        PatientDemographicsView(
-                            patient: patientBinding,
-                            onSave: {
-                                store.patients[index].updatedAt = Date()
-                            },
-                            onRequestDelete: { }
-                        )
-                    case .referencesAI:
-                        ReferencesAIHubView(
-                            store: store,
-                            selectedPatientID: selectedPatientID
-                        )
+                    Group {
+                        switch tab {
+                        case .demographics:
+                            PatientDemographicsView(
+                                patient: Binding(
+                                    get: { store.patients[index] },
+                                    set: { store.patients[index] = $0 }
+                                ),
+                                onSave: {
+                                    store.savePatient(store.patients[index])
+                                },
+                                onRequestDelete: {
+                                    confirmDeleteID = store.patients[index].id
+                                }
+                            )
 
-                    case .records:
-                        RecordsWorkspaceView(
-                            store: store,
-                            patientID: id,
-                            patient: store.patients[index]   // VALUE, not Binding
-                        )
+                        case .records:
+                            RecordsWorkspaceView(
+                                store: store,
+                                patientID: store.patients[index].id,
+                                patient: store.patients[index]
+                            )
+                            .id(store.patients[index].id) // important when switching patients
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .padding()
                 .navigationTitle(tab.rawValue)
-                .navigationBarTitleDisplayMode(.inline)
+                .navigationBarBackButtonHidden(true)
 
             } else {
                 ContentUnavailableView(
                     "No Patient Selected",
                     systemImage: "person.text.rectangle",
-                    description: Text("Add or select a patient")
+                    description: Text("Add a patient, then select them from the sidebar.")
                 )
             }
         }
     }
-
-    // MARK: - Photo Import (Category-aware)
-    @MainActor
-    private func importPickedPhoto(_ item: PhotosPickerItem, patientID: UUID, category: Attachment.Category) async {
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self) else { return }
-
-            // Convert to JPEG for predictable preview/QuickLook behavior
-            let jpegData: Data
-            if let image = UIImage(data: data),
-               let jpg = image.jpegData(compressionQuality: 0.9) {
-                jpegData = jpg
-            } else {
-                // fallback: save original bytes (rare)
-                jpegData = data
-            }
-
-            let fileName = "\(UUID().uuidString).jpg"
-            let dir = attachmentsDir(for: patientID)
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-
-            let dstURL = dir.appendingPathComponent(fileName)
-            try jpegData.write(to: dstURL, options: .atomic)
-
-            let att = Attachment(
-                patientID: patientID,
-                category: category,
-                originalFileName: fileName,
-                storedFileName: fileName
-            )
-            store.attachments.append(att)
-        } catch {
-            // Optional: you can surface an alert using store.lastErrorMessage if you have it.
-            // store.lastErrorMessage = error.localizedDescription
-        }
-    }
-
-    private func attachmentsDir(for patientID: UUID) -> URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs
-            .appendingPathComponent("Attachments", isDirectory: true)
-            .appendingPathComponent(patientID.uuidString, isDirectory: true)
+    
+    private var selectedPatientIndex: Int? {
+        guard let id = store.selectedPatientID else { return nil }
+        return store.patients.firstIndex(where: { $0.id == id })
     }
 }

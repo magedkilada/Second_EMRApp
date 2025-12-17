@@ -2,6 +2,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 import PhotosUI
 import QuickLook
+import UIKit
+
+// MARK: - Identifiable print/share job (file scope)
+fileprivate struct IdentifiableURL: Identifiable {
+    let id = UUID()
+    let url: URL
+    let jobName: String
+}
 
 struct RecordsWorkspaceView: View {
 
@@ -14,29 +22,31 @@ struct RecordsWorkspaceView: View {
     @State private var selectedNoteID: UUID?
     @State private var selectedAttachmentID: UUID?
 
-    // MARK: - Import state
+    // MARK: - Import
     @State private var importingCategory: Attachment.Category = .radiology
     @State private var showFileImporter = false
     @State private var showPhotoPicker = false
     @State private var pickedPhoto: PhotosPickerItem?
 
-    // MARK: - Preview / Share / Print
+    // MARK: - Preview
     @State private var previewURL: URL?
     @State private var showPreview = false
 
-    @State private var showShareSheet = false
-    @State private var shareItems: [Any] = []
+    // MARK: - Share / Print jobs
+    @State private var shareJob: IdentifiableURL?
+    @State private var printJob: IdentifiableURL?
 
-    @State private var showPrintSheet = false
-    @State private var printJobName: String = "Record"
-    @State private var printURL: URL?
+    // MARK: - Batch selection
+    private enum BatchKind {
+        case notes
+        case prescriptions
+    }
+    @State private var isSelectingForBatch = false
+    @State private var batchKind: BatchKind = .notes
+    @State private var selectedIDsForBatch: Set<UUID> = []
 
     // MARK: - Data
-    private var notesForPatient: [RecordNote] {
-        store.notes
-            .filter { $0.patientID == patientID }
-            .sorted { $0.updatedAt > $1.updatedAt }
-    }
+    private var notesForPatient: [RecordNote] { store.notes(for: patientID) }
 
     private var prescriptions: [RecordNote] {
         notesForPatient.filter { $0.type == .prescription }
@@ -54,28 +64,33 @@ struct RecordsWorkspaceView: View {
 
     private var selectedNote: RecordNote? {
         guard let id = selectedNoteID else { return nil }
-        return store.notes.first(where: { $0.id == id })
+        return notesForPatient.first(where: { $0.id == id })
     }
 
     private var selectedAttachment: Attachment? {
         guard let id = selectedAttachmentID else { return nil }
-        return store.attachments.first(where: { $0.id == id })
+        return attachmentsForPatient.first(where: { $0.id == id })
     }
 
-    private var selectedNoteIsFinalized: Bool {
-        selectedNote?.isFinalized == true
-    }
+    private var selectedNoteIsFinalized: Bool { selectedNote?.isFinalized == true }
 
     // MARK: - UI
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
+
+            // LEFT LIST
             recordsListPane
-        } detail: {
+                .frame(minWidth: 290, idealWidth: 330, maxWidth: 380)
+
+            Divider()
+
+            // RIGHT DETAIL
             detailPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("Records")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { topRightToolbar }   // ✅ ALL actions live here (top-right)
+        .toolbar { topRightToolbar }
 
         // FILE import
         .fileImporter(
@@ -91,7 +106,7 @@ struct RecordsWorkspaceView: View {
             }
         }
 
-        // PHOTO import (picker UI)
+        // PHOTO import
         .photosPicker(isPresented: $showPhotoPicker, selection: $pickedPhoto, matching: .images)
         .onChange(of: pickedPhoto) { _, newItem in
             guard let item = newItem else { return }
@@ -101,81 +116,56 @@ struct RecordsWorkspaceView: View {
         // PREVIEW
         .sheet(isPresented: $showPreview) {
             if let url = previewURL {
-                RSQuickLookPreview(url: url)
+                EMRQuickLookPreview(url: url)
             }
         }
 
-        // SHARE
-        .sheet(isPresented: $showShareSheet) {
-            ShareSheet(items: shareItems)
+        // SHARE (only when URL is ready)
+        .sheet(item: $shareJob) { job in
+            EMRShareSheet(items: [job.url])
         }
 
-        // PRINT
-        .sheet(isPresented: $showPrintSheet) {
-            if let url = printURL {
-                PrintSheet(jobName: printJobName, fileURL: url)
-            }
-        }
+        // PRINT (UIKit presenter — avoids SwiftUI blank flash)
+        .background(EMRPrintPresenter(printJob: $printJob))
     }
 
-    // MARK: - LEFT PANE (lists only)
+    // MARK: - Left pane (list)
     private var recordsListPane: some View {
-        List(selection: Binding(
-            get: { selectionTag },
-            set: { newTag in applySelection(tag: newTag) }
-        )) {
-
-            Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(patient.nameEnglish.isEmpty ? "Unnamed (English)" : patient.nameEnglish)
-                        .font(.headline)
-                    if !patient.mrn.isEmpty {
-                        Text("MRN: \(patient.mrn)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            Section("Prescriptions") {
-                if prescriptions.isEmpty {
-                    Text("No prescriptions yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(prescriptions) { note in
-                        RecordRow(title: note.type.headerTitle, date: note.updatedAt, isFinalized: note.isFinalized)
-                            .tag(selectionTagForNote(note.id))
-                    }
-                }
-            }
+        List {
 
             Section("Notes") {
-                if nonPrescriptions.isEmpty {
-                    Text("No notes yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(nonPrescriptions) { note in
-                        RecordRow(title: note.type.headerTitle, date: note.updatedAt, isFinalized: note.isFinalized)
-                            .tag(selectionTagForNote(note.id))
+                ForEach(nonPrescriptions) { note in
+                    rowForNote(note, kind: .notes)
+                }
+            }
+
+            if !prescriptions.isEmpty {
+                Section("Prescriptions") {
+                    ForEach(prescriptions) { note in
+                        rowForNote(note, kind: .prescriptions)
                     }
                 }
             }
 
-            Section("Imported Files & Photos") {
-                if attachmentsForPatient.isEmpty {
-                    Text("No imported records yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(attachmentsForPatient) { att in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(att.originalFileName)
-                                .lineLimit(1)
+            Section("Attachments") {
+                ForEach(attachmentsForPatient) { att in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(att.originalFileName).lineLimit(1)
                             Text(att.category.rawValue)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        .tag(selectionTagForAttachment(att.id))
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        // attachments are not part of batch-selection
+                        isSelectingForBatch = false
+                        selectedIDsForBatch.removeAll()
+
+                        selectedAttachmentID = att.id
+                        selectedNoteID = nil
                     }
                 }
             }
@@ -183,59 +173,117 @@ struct RecordsWorkspaceView: View {
         .listStyle(.insetGrouped)
     }
 
-    // MARK: - RIGHT PANE
+    private func rowForNote(_ note: RecordNote, kind: BatchKind) -> some View {
+        HStack(spacing: 12) {
+
+            // selection circles ONLY when selecting and only for matching section
+            if isSelectingForBatch, batchKind == kind {
+                Image(systemName: selectedIDsForBatch.contains(note.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(.blue)
+                    .onTapGesture { toggleBatchSelection(note.id) }
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(note.type.headerTitle).font(.body)
+                Text(note.updatedAt, style: .date)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if note.isFinalized {
+                Image(systemName: "lock.fill").foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isSelectingForBatch, batchKind == kind {
+                toggleBatchSelection(note.id)
+            } else {
+                selectedNoteID = note.id
+                selectedAttachmentID = nil
+            }
+        }
+    }
+
+    private func toggleBatchSelection(_ id: UUID) {
+        if selectedIDsForBatch.contains(id) {
+            selectedIDsForBatch.remove(id)
+        } else {
+            selectedIDsForBatch.insert(id)
+        }
+    }
+
+    // MARK: - Detail pane
     private var detailPane: some View {
         Group {
-            if let noteID = selectedNoteID,
-               let binding = bindingForNote(noteID) {
-                noteEditor(note: binding)
+            if let note = selectedNote {
+                NoteEditorView(note: note) { saveNote($0) }
+                    .navigationTitle(note.type.headerTitle)
 
             } else if let att = selectedAttachment {
                 attachmentDetail(att)
 
             } else {
                 ContentUnavailableView(
-                    "No record selected",
-                    systemImage: "doc",
-                    description: Text("Select a note or imported file.")
+                    "No Selection",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Select a note or attachment from the list.")
                 )
             }
         }
         .padding()
     }
 
-    // MARK: - TOP RIGHT TOOLBAR (actions)
+    private func attachmentDetail(_ att: Attachment) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(att.originalFileName).font(.headline)
+            Text(att.category.rawValue).foregroundStyle(.secondary)
+
+            Button("Preview") {
+                previewURL = attachmentURL(att)
+                showPreview = true
+            }
+            .buttonStyle(.borderedProminent)
+
+            Spacer()
+        }
+    }
+
+    // MARK: - Toolbar
     @ToolbarContentBuilder
     private var topRightToolbar: some ToolbarContent {
+
         ToolbarItemGroup(placement: .topBarTrailing) {
 
-            // Finalize (permanent)
+            // Finalize
             if selectedNoteID != nil {
                 Button {
                     finalizeSelectedNote()
                 } label: {
-                    Label(selectedNoteIsFinalized ? "Finalized" : "Finalize",
-                          systemImage: selectedNoteIsFinalized ? "lock.fill" : "checkmark.seal")
+                    Label(
+                        selectedNoteIsFinalized ? "Finalized" : "Finalize",
+                        systemImage: selectedNoteIsFinalized ? "lock.fill" : "checkmark.seal"
+                    )
                 }
                 .disabled(selectedNoteIsFinalized)
             }
 
             // Add note
             Menu {
-                Button("H&P") { addNote(type: .hp) }
-                Button("SOAP / Progress Note") { addNote(type: .soap) }
-                Button("Operative") { addNote(type: .operative) }
-                Button("Discharge") { addNote(type: .discharge) }
-                Button("EEG") { addNote(type: .eeg) }
+                Button("H&P")          { addNote(type: .hp) }
+                Button("SOAP")         { addNote(type: .soap) }
+                Button("Operative")    { addNote(type: .operative) }
+                Button("Discharge")    { addNote(type: .discharge) }
+                Button("EEG")          { addNote(type: .eeg) }
                 Button("Prescription") { addNote(type: .prescription) }
-                Button("Clinical Note") { addNote(type: .blank) }
+                Button("Clinical Note"){ addNote(type: .blank) }
             } label: {
                 Image(systemName: "square.and.pencil")
             }
 
-            // Import (with category choices for BOTH file and photo)
-            // If iPad still refuses to show the Photo submenu on your iOS version,
-            // I included a fallback right below (commented) that always works.
+            // Import
             Menu {
                 Menu("Import File…") {
                     ForEach(Attachment.Category.allCases) { cat in
@@ -245,7 +293,6 @@ struct RecordsWorkspaceView: View {
                         }
                     }
                 }
-
                 Menu("Import Photo…") {
                     ForEach(Attachment.Category.allCases) { cat in
                         Button(cat.rawValue) {
@@ -254,26 +301,6 @@ struct RecordsWorkspaceView: View {
                         }
                     }
                 }
-
-                // ---- FALLBACK (uncomment if Photo submenu still won’t appear) ----
-                /*
-                Section("Import File…") {
-                    ForEach(Attachment.Category.allCases) { cat in
-                        Button(cat.rawValue) {
-                            importingCategory = cat
-                            showFileImporter = true
-                        }
-                    }
-                }
-                Section("Import Photo…") {
-                    ForEach(Attachment.Category.allCases) { cat in
-                        Button(cat.rawValue) {
-                            importingCategory = cat
-                            showPhotoPicker = true
-                        }
-                    }
-                }
-                */
             } label: {
                 Image(systemName: "paperclip")
             }
@@ -286,248 +313,334 @@ struct RecordsWorkspaceView: View {
             }
             .disabled(selectedNoteID == nil && selectedAttachmentID == nil)
 
-            // Print
-            Button {
-                printCurrentSelection()
+            // PRINT (single + batch + selectable batch) from ONE button
+            Menu {
+                Button("Print Current Selection") { printCurrentSelection() }
+
+                Divider()
+
+                Button("Print All Notes") { printBatch(title: "All Notes", notes: nonPrescriptions) }
+                    .disabled(nonPrescriptions.isEmpty)
+
+                Button("Print Prescriptions") { printBatch(title: "Prescriptions", notes: prescriptions) }
+                    .disabled(prescriptions.isEmpty)
+
+                Divider()
+
+                Button("Select Notes…") {
+                    beginBatchSelection(kind: .notes)
+                }
+                .disabled(nonPrescriptions.isEmpty)
+
+                Button("Select Prescriptions…") {
+                    beginBatchSelection(kind: .prescriptions)
+                }
+                .disabled(prescriptions.isEmpty)
+
+                Button("Print Selected") {
+                    printSelectedBatch()
+                }
+                .disabled(!isSelectingForBatch || selectedIDsForBatch.isEmpty)
+
+                Button("Cancel Selection", role: .destructive) {
+                    cancelBatchSelection()
+                }
+                .disabled(!isSelectingForBatch)
+
             } label: {
                 Image(systemName: "printer")
             }
-            .disabled(selectedNoteID == nil && selectedAttachmentID == nil)
+            .disabled(selectedNoteID == nil && selectedAttachmentID == nil && nonPrescriptions.isEmpty && prescriptions.isEmpty)
 
-            // Delete (notes only before finalize)
+            // Delete
             Button(role: .destructive) {
                 deleteCurrentSelection()
             } label: {
                 Image(systemName: "trash")
             }
-            .disabled(
-                (selectedNoteID == nil && selectedAttachmentID == nil) ||
-                (selectedNoteID != nil && selectedNoteIsFinalized)
-            )
+            .disabled(selectedNoteID == nil && selectedAttachmentID == nil)
         }
     }
 
-    // MARK: - Note editor
-    private func noteEditor(note: Binding<RecordNote>) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-
-            HStack {
-                Text(note.wrappedValue.type.headerTitle)
-                    .font(.headline)
-
-                if note.wrappedValue.isFinalized {
-                    Spacer()
-                    Label("Finalized", systemImage: "lock.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            TextEditor(text: note.body)
-                .frame(maxHeight: .infinity)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary))
-                .disabled(note.wrappedValue.isFinalized)
-
-            HStack {
-                Button("Save") {
-                    var n = note.wrappedValue
-                    n.updatedAt = Date()
-                    store.saveNote(n)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(note.wrappedValue.isFinalized)
-
-                Spacer()
-            }
-
-            if note.wrappedValue.isFinalized {
-                Text("This note is finalized and cannot be edited or deleted.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
+    private func beginBatchSelection(kind: BatchKind) {
+        isSelectingForBatch = true
+        batchKind = kind
+        selectedIDsForBatch.removeAll()
+        selectedNoteID = nil
+        selectedAttachmentID = nil
     }
 
-    // MARK: - Attachment detail
-    private func attachmentDetail(_ att: Attachment) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(att.originalFileName).font(.headline)
-            Text(att.category.rawValue).foregroundStyle(.secondary)
-
-            Button("View") {
-                previewURL = store.attachmentFileURL(att)
-                showPreview = (previewURL != nil)
-            }
-            .buttonStyle(.bordered)
-        }
+    private func cancelBatchSelection() {
+        isSelectingForBatch = false
+        selectedIDsForBatch.removeAll()
     }
 
-    // MARK: - Actions
+    private func printSelectedBatch() {
+        guard isSelectingForBatch else { return }
+
+        let source: [RecordNote] = (batchKind == .notes) ? nonPrescriptions : prescriptions
+        let selected = source.filter { selectedIDsForBatch.contains($0.id) }
+
+        guard !selected.isEmpty else { return }
+
+        let title = (batchKind == .notes) ? "Selected Notes" : "Selected Prescriptions"
+        printBatch(title: title, notes: selected)
+
+        // optional: auto-exit selection mode after printing
+        cancelBatchSelection()
+    }
+
+    // MARK: - Note actions
     private func addNote(type: RecordType) {
-        let note = RecordNote(patientID: patientID, type: type)
+        var note = RecordNote(patientID: patientID, type: type)
+        note.updatedAt = Date()
         store.saveNote(note)
+
         selectedNoteID = note.id
         selectedAttachmentID = nil
     }
 
-    private func finalizeSelectedNote() {
-        guard let id = selectedNoteID,
-              let idx = store.notes.firstIndex(where: { $0.id == id }) else { return }
+    private func saveNote(_ note: RecordNote) {
+        store.saveNote(note)
+    }
 
-        store.notes[idx].isFinalized = true
-        store.notes[idx].finalizedAt = Date()
-        store.notes[idx].updatedAt = Date()
-        store.saveNote(store.notes[idx])
+    private func finalizeSelectedNote() {
+        guard var note = selectedNote else { return }
+        guard note.isFinalized == false else { return }
+
+        note.isFinalized = true
+        note.finalizedAt = Date()
+        store.saveNote(note)
     }
 
     private func deleteCurrentSelection() {
-        if let id = selectedNoteID,
-           let note = store.notes.first(where: { $0.id == id }) {
-
-            guard note.isFinalized == false else { return }
+        if let note = selectedNote {
             store.deleteNote(note)
             selectedNoteID = nil
-
-        } else if let id = selectedAttachmentID,
-                  let att = store.attachments.first(where: { $0.id == id }) {
+            return
+        }
+        if let att = selectedAttachment {
             store.deleteAttachment(att)
             selectedAttachmentID = nil
+            return
         }
     }
 
+    // MARK: - Share / Print (single)
+    @MainActor
     private func shareCurrentSelection() {
         if let note = selectedNote {
-            if let url = SharePrintBuilder.makePDFFile(
-                filename: "Note",
-                title: note.type.headerTitle,
-                body: note.body
-            ) {
-                shareItems = [url]
-            } else {
-                shareItems = [note.body]
+            Task {
+                do {
+                    let url = try makeNotePDFURL(noteTitle: note.type.headerTitle, noteText: note.body)
+                    shareJob = IdentifiableURL(url: url, jobName: note.type.headerTitle)
+                } catch {
+                    store.lastErrorMessage = "Share failed: \(error.localizedDescription)"
+                }
             }
-            showShareSheet = true
             return
         }
 
         if let att = selectedAttachment {
-            shareItems = [store.attachmentFileURL(att)]
-            showShareSheet = true
+            shareJob = IdentifiableURL(url: attachmentURL(att), jobName: att.category.rawValue)
         }
     }
 
+    @MainActor
     private func printCurrentSelection() {
-        if let note = selectedNote,
-           let url = SharePrintBuilder.makePDFFile(
-                filename: "Note",
-                title: note.type.headerTitle,
-                body: note.body
-           ) {
-            printJobName = note.type.headerTitle
-            printURL = url
-            showPrintSheet = true
+        if let note = selectedNote {
+            Task {
+                do {
+                    let url = try makeNotePDFURL(noteTitle: note.type.headerTitle, noteText: note.body)
+                    printJob = IdentifiableURL(url: url, jobName: note.type.headerTitle)
+                } catch {
+                    store.lastErrorMessage = "Print failed: \(error.localizedDescription)"
+                }
+            }
             return
         }
 
         if let att = selectedAttachment {
-            printJobName = att.originalFileName
-            printURL = store.attachmentFileURL(att)
-            showPrintSheet = true
+            printJob = IdentifiableURL(url: attachmentURL(att), jobName: att.category.rawValue)
         }
     }
 
-    /// Photo import WITHOUT `store.importPhoto`:
-    /// Save picked image to a temp .jpg, then call your existing `store.importFile(...)`.
+    // MARK: - Print (batch)
+    @MainActor
+    private func printBatch(title: String, notes: [RecordNote]) {
+        guard !notes.isEmpty else { return }
+
+        Task {
+            do {
+                let url = try makeBatchPDFURL(title: title, notes: notes)
+                printJob = IdentifiableURL(url: url, jobName: title)
+            } catch {
+                store.lastErrorMessage = "Batch print failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - Photo import
     private func importPickedPhoto(_ item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Photo-\(UUID().uuidString)")
-            .appendingPathExtension("jpg")
-
         do {
-            try data.write(to: tempURL, options: .atomic)
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else { return }
 
-            if let att = store.importFile(patientID: patientID, category: importingCategory, sourceURL: tempURL) {
+            let tmpURL = try writeTempJPEG(image: image)
+
+            if let att = store.importFile(patientID: patientID, category: importingCategory, sourceURL: tmpURL) {
                 await MainActor.run {
                     selectedAttachmentID = att.id
                     selectedNoteID = nil
-                    pickedPhoto = nil
                 }
             }
         } catch {
             await MainActor.run {
-                pickedPhoto = nil
+                store.lastErrorMessage = "Photo import failed: \(error.localizedDescription)"
             }
         }
     }
 
-    // MARK: - Binding helpers
-    private func bindingForNote(_ id: UUID) -> Binding<RecordNote>? {
-        guard let idx = store.notes.firstIndex(where: { $0.id == id }) else { return nil }
-        return Binding(
-            get: { store.notes[idx] },
-            set: { store.notes[idx] = $0 }
-        )
-    }
-
-    // MARK: - Tagged selection plumbing
-    private enum SelectionTag: Hashable {
-        case note(UUID)
-        case attachment(UUID)
-    }
-
-    private var selectionTag: SelectionTag? {
-        if let n = selectedNoteID { return .note(n) }
-        if let a = selectedAttachmentID { return .attachment(a) }
-        return nil
-    }
-
-    private func applySelection(tag: SelectionTag?) {
-        switch tag {
-        case .note(let id):
-            selectedNoteID = id
-            selectedAttachmentID = nil
-        case .attachment(let id):
-            selectedAttachmentID = id
-            selectedNoteID = nil
-        case nil:
-            selectedNoteID = nil
-            selectedAttachmentID = nil
+    private func writeTempJPEG(image: UIImage) throws -> URL {
+        guard let jpg = image.jpegData(compressionQuality: 0.9) else {
+            throw NSError(domain: "EMR", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not encode JPEG"])
         }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("jpg")
+        try jpg.write(to: url, options: .atomic)
+        return url
     }
 
-    private func selectionTagForNote(_ id: UUID) -> SelectionTag { .note(id) }
-    private func selectionTagForAttachment(_ id: UUID) -> SelectionTag { .attachment(id) }
+    // MARK: - Attachment URL (matches your store helper)
+    private func attachmentURL(_ att: Attachment) -> URL {
+        store.attachmentFileURL(att)
+    }
+
+    // MARK: - PDF creation (single note)
+    private func makeNotePDFURL(noteTitle: String, noteText: String) throws -> URL {
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [kCGPDFContextTitle as String: noteTitle]
+
+        let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792) // US Letter
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect, format: format)
+
+        let data = renderer.pdfData { ctx in
+            ctx.beginPage()
+
+            let margin: CGFloat = 36
+            var y: CGFloat = margin
+
+            let titleAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 18)]
+            let bodyAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 12)]
+
+            let title = NSAttributedString(string: noteTitle, attributes: titleAttrs)
+            let titleSize = title.boundingRect(
+                with: CGSize(width: pageRect.width - 2 * margin, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            ).integral.size
+
+            title.draw(in: CGRect(x: margin, y: y, width: pageRect.width - 2 * margin, height: titleSize.height))
+            y += titleSize.height + 16
+
+            let body = NSAttributedString(string: noteText, attributes: bodyAttrs)
+            let bodyRect = CGRect(x: margin, y: y,
+                                  width: pageRect.width - 2 * margin,
+                                  height: pageRect.height - y - margin)
+            body.draw(in: bodyRect)
+        }
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    // MARK: - PDF creation (batch) — one note per page
+    private func makeBatchPDFURL(title: String, notes: [RecordNote]) throws -> URL {
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [kCGPDFContextTitle as String: title]
+
+        let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect, format: format)
+
+        let data = renderer.pdfData { ctx in
+            let margin: CGFloat = 36
+            let titleAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+            let bodyAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 12)]
+
+            for note in notes.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+                ctx.beginPage()
+                var y: CGFloat = margin
+
+                let header = NSAttributedString(string: note.type.headerTitle, attributes: titleAttrs)
+                let headerSize = header.boundingRect(
+                    with: CGSize(width: pageRect.width - 2 * margin, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    context: nil
+                ).integral.size
+
+                header.draw(in: CGRect(x: margin, y: y,
+                                       width: pageRect.width - 2 * margin,
+                                       height: headerSize.height))
+                y += headerSize.height + 12
+
+                let body = NSAttributedString(string: note.body, attributes: bodyAttrs)
+                let bodyRect = CGRect(x: margin, y: y,
+                                      width: pageRect.width - 2 * margin,
+                                      height: pageRect.height - y - margin)
+                body.draw(in: bodyRect)
+            }
+        }
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+
+        try data.write(to: url, options: .atomic)
+        return url
+    }
 }
 
-// MARK: - Row UI (lock badge)
-private struct RecordRow: View {
-    let title: String
-    let date: Date
-    let isFinalized: Bool
+// MARK: - Minimal Note Editor
+private struct NoteEditorView: View {
+    @State var note: RecordNote
+    let onSave: (RecordNote) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            if isFinalized {
-                Image(systemName: "lock.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            TextEditor(text: $note.body)
+                .font(.body)
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+                .disabled(note.isFinalized)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(date.formatted(date: .abbreviated, time: .omitted))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            HStack {
+                Button("Save") {
+                    var n = note
+                    n.updatedAt = Date()
+                    onSave(n)
+                    note = n
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(note.isFinalized)
+
+                if note.isFinalized {
+                    Text("This note is finalized and cannot be edited or deleted.")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
+
+                Spacer()
             }
         }
-        .padding(.vertical, 2)
     }
 }
 
-// MARK: - QuickLook
-private struct RSQuickLookPreview: UIViewControllerRepresentable {
+// MARK: - QuickLook preview
+private struct EMRQuickLookPreview: UIViewControllerRepresentable {
     let url: URL
 
     func makeUIViewController(context: Context) -> QLPreviewController {
@@ -545,8 +658,50 @@ private struct RSQuickLookPreview: UIViewControllerRepresentable {
         init(url: URL) { self.url = url }
 
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
             url as NSURL
+        }
+    }
+}
+
+// MARK: - Share sheet
+private struct EMRShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Print presenter (no SwiftUI sheet => no blank flash)
+private struct EMRPrintPresenter: UIViewControllerRepresentable {
+    @Binding var printJob: IdentifiableURL?
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        let vc = UIViewController()
+        vc.view.isHidden = true
+        vc.view.backgroundColor = .clear
+        return vc
+    }
+
+    func updateUIViewController(_ vc: UIViewController, context: Context) {
+        guard let job = printJob else { return }
+
+        // clear first to prevent double present
+        DispatchQueue.main.async { self.printJob = nil }
+
+        DispatchQueue.main.async {
+            let controller = UIPrintInteractionController.shared
+            let info = UIPrintInfo(dictionary: nil)
+            info.jobName = job.jobName
+            info.outputType = .general
+
+            controller.printInfo = info
+            controller.printingItem = job.url
+            controller.present(animated: true, completionHandler: nil)
         }
     }
 }
