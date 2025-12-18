@@ -15,12 +15,20 @@ struct PhysiciansManagerView: View {
             List {
                 ForEach(store.physicians) { p in
                     HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(p.name).font(.headline)
-                            Text("\(p.specialty) • \(p.clinic)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+
+                        // ✅ Selection tap area (only this selects)
+                        Button {
+                            store.selectedPhysicianID = p.id
+                            store.save()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(p.name).font(.headline)
+                                Text("\(p.specialty) • \(p.clinic)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .buttonStyle(.plain)
 
                         Spacer()
 
@@ -29,7 +37,7 @@ struct PhysiciansManagerView: View {
                                 .foregroundStyle(.blue)
                         }
 
-                        // ✅ Visible actions (no swipe needed)
+                        // ✅ Edit
                         Button {
                             editing = p
                         } label: {
@@ -37,36 +45,19 @@ struct PhysiciansManagerView: View {
                         }
                         .buttonStyle(.borderless)
 
+                        // ✅ Delete
                         Button(role: .destructive) {
-                            if store.physicians.count <= 1 {
-                                showCantDeleteLast = true
-                            } else {
-                                confirmDelete = p
-                            }
+                            requestDelete(p)
                         } label: {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.borderless)
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        store.selectedPhysicianID = p.id
-                        store.save()
-                    }
                     .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) {
-                            if store.physicians.count <= 1 {
-                                showCantDeleteLast = true
-                            } else {
-                                confirmDelete = p
-                            }
-                        } label: {
+                        Button(role: .destructive) { requestDelete(p) } label: {
                             Label("Delete", systemImage: "trash")
                         }
-
-                        Button {
-                            editing = p
-                        } label: {
+                        Button { editing = p } label: {
                             Label("Edit", systemImage: "pencil")
                         }
                         .tint(.blue)
@@ -75,7 +66,9 @@ struct PhysiciansManagerView: View {
             }
             .navigationTitle("Physicians")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showAdd = true } label: { Image(systemName: "plus") }
                 }
@@ -107,6 +100,14 @@ struct PhysiciansManagerView: View {
             } message: {
                 Text("You must keep at least one physician in the list.")
             }
+        }
+    }
+
+    private func requestDelete(_ p: Physician) {
+        if store.physicians.count <= 1 {
+            showCantDeleteLast = true
+        } else {
+            confirmDelete = p
         }
     }
 }

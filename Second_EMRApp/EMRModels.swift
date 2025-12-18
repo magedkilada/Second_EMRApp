@@ -195,7 +195,7 @@ public struct RecordNote: Identifiable, Codable, Hashable {
     public var patientID: UUID
 
     public var type: RecordType
-    public var title: String = ""      // mostly for Blank
+    public var title: String            // used mainly for .blank
     public var body: String
 
     public var createdAt: Date = Date()
@@ -205,16 +205,31 @@ public struct RecordNote: Identifiable, Codable, Hashable {
     public var finalizedAt: Date? = nil
 
     // Prescription helpers (optional)
-    public var episodeDiagnosis: String = ""     // can be used for batch Rx print/share
-    public var medicationKey: String = ""        // for grouping prescriptions
+    public var episodeDiagnosis: String = ""
+    public var medicationKey: String = ""
+
+    /// Use this everywhere in UI (sidebar rows, navigation titles, PDFs…)
+    public var displayTitle: String {
+        if type == .blank {
+            return title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Clinical Note" : title
+        } else {
+            return type.headerTitle
+        }
+    }
 
     public init(patientID: UUID, type: RecordType) {
         self.patientID = patientID
         self.type = type
         self.body = type.defaultBody
+
+        // Default title behavior
+        if type == .blank {
+            self.title = "Clinical Note"
+        } else {
+            self.title = "" // ignored for non-blank
+        }
     }
 }
-
 // MARK: - Attachments
 
 public struct Attachment: Identifiable, Codable, Hashable {

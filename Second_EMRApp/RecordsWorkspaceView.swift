@@ -21,6 +21,7 @@ struct RecordsWorkspaceView: View {
     // MARK: - Selection
     @State private var selectedNoteID: UUID?
     @State private var selectedAttachmentID: UUID?
+    @State private var showAIAssist = false
 
     // MARK: - Import
     @State private var importingCategory: Attachment.Category = .radiology
@@ -119,6 +120,20 @@ struct RecordsWorkspaceView: View {
                 EMRQuickLookPreview(url: url)
             }
         }
+        
+        .sheet(isPresented: $showAIAssist) {
+            if let note = selectedNote {
+                AIAssistView(note: note) { newBody in
+                    var n = note
+                    n.body = newBody
+                    n.updatedAt = Date()
+                    store.saveNote(n)
+                }
+            } else {
+                Text("No note selected.")
+                    .padding()
+            }
+        }
 
         // SHARE (only when URL is ready)
         .sheet(item: $shareJob) { job in
@@ -129,6 +144,7 @@ struct RecordsWorkspaceView: View {
         .background(EMRPrintPresenter(printJob: $printJob))
     }
 
+    
     // MARK: - Left pane (list)
     private var recordsListPane: some View {
         List {
@@ -238,8 +254,11 @@ struct RecordsWorkspaceView: View {
 
     private func attachmentDetail(_ att: Attachment) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(att.originalFileName).font(.headline)
-            Text(att.category.rawValue).foregroundStyle(.secondary)
+            Text(att.originalFileName)
+                .font(.headline)
+
+            Text(att.category.rawValue)
+                .foregroundStyle(.secondary)
 
             Button("Preview") {
                 previewURL = attachmentURL(att)
@@ -249,6 +268,7 @@ struct RecordsWorkspaceView: View {
 
             Spacer()
         }
+        .padding()
     }
 
     // MARK: - Toolbar
@@ -311,7 +331,16 @@ struct RecordsWorkspaceView: View {
             } label: {
                 Image(systemName: "square.and.arrow.up")
             }
-            .disabled(selectedNoteID == nil && selectedAttachmentID == nil)
+            .disabled(selectedNoteID == nil && selectedAttachmentID == nil)// AI Assist (only when a note is selected)
+            if selectedNoteID != nil {
+                Button {
+                    showAIAssist = true
+                } label: {
+                    Image(systemName: "sparkles")
+                }
+            }
+            
+            
 
             // PRINT (single + batch + selectable batch) from ONE button
             Menu {
@@ -393,6 +422,13 @@ struct RecordsWorkspaceView: View {
     // MARK: - Note actions
     private func addNote(type: RecordType) {
         var note = RecordNote(patientID: patientID, type: type)
+
+        // If this is a blank note, ensure it has a usable title
+        if type == .blank, note.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            note.title = "Clinical Note"
+        }
+
+        note.createdAt = Date()
         note.updatedAt = Date()
         store.saveNote(note)
 
@@ -401,7 +437,9 @@ struct RecordsWorkspaceView: View {
     }
 
     private func saveNote(_ note: RecordNote) {
-        store.saveNote(note)
+        var n = note
+        n.updatedAt = Date()
+        store.saveNote(n)
     }
 
     private func finalizeSelectedNote() {
@@ -410,15 +448,19 @@ struct RecordsWorkspaceView: View {
 
         note.isFinalized = true
         note.finalizedAt = Date()
+        note.updatedAt = Date()
         store.saveNote(note)
     }
 
     private func deleteCurrentSelection() {
+        // If you're in batch-selection mode, do nothing here (prevents accidental deletes)
+
         if let note = selectedNote {
             store.deleteNote(note)
             selectedNoteID = nil
             return
         }
+
         if let att = selectedAttachment {
             store.deleteAttachment(att)
             selectedAttachmentID = nil
