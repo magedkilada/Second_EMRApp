@@ -84,27 +84,17 @@ struct AIAssistView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-
                 VStack(spacing: 14) {
 
-                    // =========================
-                    // TOP MODE TOGGLE
-                    // =========================
-                    Picker("Mode", selection: $topMode) {
-                        Text("Assist").tag(TopMode.assist)
-                        Text("Translate").tag(TopMode.translate)
+                    // Top toggle: Assist / Translate
+                    Picker("", selection: $topMode) {
+                        ForEach(TopMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
                     }
                     .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .background(Color.yellow.opacity(0.25))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    Text("AI Assist ✅ v2")
-                        .font(.headline)
-                        .foregroundStyle(.red)
 
-                    // =========================
-                    // WHAT AI SEES
-                    // =========================
+                    // What AI sees
                     GroupBox("What AI sees") {
                         Text(note.body)
                             .font(.footnote)
@@ -113,20 +103,17 @@ struct AIAssistView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    // =========================
-                    // MODE-SPECIFIC UI
-                    // =========================
+                    // Mode-specific UI
                     if topMode == .assist {
                         assistControls
                     } else {
                         translateControls
                     }
 
-                    // =========================
-                    // OUTPUT PREVIEW
-                    // =========================
+                    // Output preview
                     aiOutputPreview
 
+                    // Error (if any)
                     if let err = errorMessage {
                         Text(err)
                             .foregroundStyle(.red)
@@ -137,7 +124,7 @@ struct AIAssistView: View {
                 }
                 .padding()
             }
-            .navigationTitle("AI Assist ✅ v2")
+            .navigationTitle("AI Assist")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
@@ -329,51 +316,50 @@ Rules:
         let instruction = extraInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch topMode {
+
         case .assist:
             switch assistScope {
+
             case .whole:
                 return """
-NOTE TYPE: \(note.type.rawValue)
-REQUEST: \(wholeAction.rawValue)
-\(instruction.isEmpty ? "" : "EXTRA: \(instruction)\n")
-NOTE TEXT:
-\(note.body)
-"""
-            case .section:
-                let h = selectedHeader
-                return """
-NOTE TYPE: \(note.type.rawValue)
-REQUEST: Update ONLY this section: "\(h)"
-MODE: \(sectionInsertBelowHeader ? "Generate new content to insert below the header" : "Generate replacement content for the section")
-\(instruction.isEmpty ? "" : "EXTRA: \(instruction)\n")
-CURRENT NOTE TEXT:
-\(note.body)
+    NOTE TYPE: \(note.type.rawValue)
+    REQUEST: \(wholeAction.rawValue)
+    \(instruction.isEmpty ? "" : "EXTRA: \(instruction)\n")
+    NOTE TEXT:
+    \(note.body)
+    """
 
-Return ONLY the section content (do not repeat the entire note).
-If you include the header, include it exactly as "\(h)".
-"""
+            case .section:
+                let h = selectedHeader.isEmpty
+                    ? (headersForThisNote.first ?? "")
+                    : selectedHeader
+
+                return """
+    NOTE TYPE: \(note.type.rawValue)
+    REQUEST: Update ONLY this section: "\(h)"
+    MODE: \(sectionInsertBelowHeader
+        ? "Generate new content to insert below the header"
+        : "Generate replacement content for the section")
+    \(instruction.isEmpty ? "" : "EXTRA: \(instruction)\n")
+    CURRENT NOTE TEXT:
+    \(note.body)
+
+    Return ONLY the section content (do not repeat the entire note).
+    If you include the header, include it exactly as "\(h)".
+    """
             }
 
         case .translate:
-            let headers = headersForThisNote
-            let headerList = headers.isEmpty ? "" : headers.joined(separator: " | ")
-
             return """
-TASK: Translate the NOTE TEXT into \(targetLanguage.instructionName).
-
-CRITICAL RULES:
-1) Do NOT invent any clinical facts.
-2) KEEP ALL SECTION HEADERS IN ENGLISH EXACTLY (do not translate them). Headers to keep exactly include:
-\(headerList.isEmpty ? "(Use the existing English headers present in the note; keep any line ending with ':' in English.)" : headerList)
-3) Only translate the content under the headers.
-4) Keep formatting and line breaks similar.
-
-\(instruction.isEmpty ? "" : "EXTRA: \(instruction)\n")
-NOTE TEXT:
-\(note.body)
-
-Return the translated note text.
-"""
+    TASK: Translate the NOTE TEXT into \(targetLanguage.instructionName).
+    RULES:
+    - Keep ALL headers in English EXACTLY as written (do NOT translate headers).
+    - Translate ONLY the content under headers.
+    - Do NOT invent facts.
+    \(instruction.isEmpty ? "" : "EXTRA: \(instruction)\n")
+    NOTE TEXT:
+    \(note.body)
+    """
         }
     }
 

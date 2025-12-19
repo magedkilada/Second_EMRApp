@@ -1,194 +1,230 @@
+//
+//  BackupCenter.swift
+//  Second_EMRApp
+//
+
 import Foundation
-import Combine
 import CryptoKit
-import Security
+import Combine
 
 @MainActor
 final class BackupCenter: ObservableObject {
 
-    // MARK: - Published UI state
-    @Published var isICloudAvailable: Bool = false
+    // MARK: - Published UI State
+
     @Published var lastBackupDate: Date? = nil
     @Published var lastErrorMessage: String? = nil
+    // MARK: - Auto-backup settings (throttle)
 
-    // MARK: - User prefs
-    private let autoBackupKey = "backup.auto.enabled"
+    private let minAutoBackupInterval: TimeInterval = 5 * 60 // 5 minutes
+    private var lastAutoBackupWrite: Date? = nil
 
-    var autoBackupEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: autoBackupKey) }
-        set { UserDefaults.standard.set(newValue, forKey: autoBackupKey) }
-    }
+    // MARK: - Public API (Manual export/import)
 
-    // MARK: - Constants
-    private let keychainService = "Second_EMRApp.BackupCenter"
-    private let keychainAccount = "backup.symmetricKey.v1"
-
-    private let folderName = "SecondEMRBackups"
-    private let backupFileName = "patients.enc"
-    private let metaFileName   = "patients.meta"   // stores timestamp string
-
-    init() { }
-
-    // MARK: - Lifecycle
-    func configureIfNeeded() {
-        isICloudAvailable = (FileManager.default.ubiquityIdentityToken != nil)
-        lastBackupDate = readBackupDateFromDisk()
-    }
-
-    // MARK: - Public API
-
-    /// Encrypt + write latest snapshot to disk (iCloud if available, else local Documents)
-    func backupNow(patients: [Patient]) {
+    /// Creates an encrypted backup file (used by FileExporter).
+    /// Requires `BackupPayload` and `BackupFileDocument` to already exist in your project.
+    func makeEncryptedBackup(store: EMRStore, password: String) -> BackupFileDocument? {
         do {
-            let data = try JSONEncoder().encode(patients)
-            let encrypted = try encrypt(data)
+            let data = try encryptedBackupData(from: store, password: password)
+            lastBackupDate = Date()
+            lastErrorMessage = nil
+            return BackupFileDocument(data: data)
+        } catch {
+            lastErrorMessage = "Export failed: \(error.localizedDescription)"
+            return nil
+        }
+    }
 
-            let dir = try ensureBackupDirectory()
-            let encURL = dir.appendingPathComponent(backupFileName)
-            try encrypted.write(to: encURL, options: .atomic)
+    /// Restores from encrypted file data (used by FileImporter).
+    /// Fast-fails with “wrong password or corrupted file” instead of CryptoKit noise.
+    func restoreEncryptedBackup(into store: EMRStore, fileData: Data, password: String) {
+        do {
+            // fast-fail verification
+            guard looksLikeOurBackupFile(fileData) else {
+                throw NSError(domain: "BackupCenter", code: -10,
+                              userInfo: [NSLocalizedDescriptionKey: "Not a valid EMR backup file."])
+            }
 
-            let now = Date()
-            try writeBackupDate(now, in: dir)
+            let payload = try decryptPayload(fileData, password: password)
 
+            // Replace everything
+            store.patients = payload.patients
+            store.notes = payload.notes
+            store.attachments = payload.attachments
+
+            // Reselect something reasonable
+            store.selectedPatientID = store.patients.first(where: { !$0.isDeleted })?.id
+            store.selectedNoteID = nil
+
+            // Persist using your existing store persistence method
+            store.forcePersistAll()
+
+            lastBackupDate = payload.createdAt
+            lastErrorMessage = nil
+        } catch {
+            // keep message friendly
+            lastErrorMessage = "Import failed: wrong password or corrupted file."
+        }
+    }
+
+    // MARK: - Auto Backup (local file inside Documents/Backups)
+
+    /// Call this when you want an automatic local backup (e.g., after Save Patient).
+    /// It throttles to max once every 5 minutes.
+    func autoBackupIfNeeded(store: EMRStore, password: String) {
+        let now = Date()
+        if let last = lastAutoBackupWrite, now.timeIntervalSince(last) < minAutoBackupInterval {
+            return
+        }
+
+        do {
+            let data = try encryptedBackupData(from: store, password: password)
+            try writeAutoBackupFile(data)
+            lastAutoBackupWrite = now
             lastBackupDate = now
             lastErrorMessage = nil
         } catch {
-            lastErrorMessage = "Backup failed: \(error.localizedDescription)"
+            lastErrorMessage = "Auto-backup failed: \(error.localizedDescription)"
         }
     }
 
-    /// Restore latest snapshot from disk. Returns nil on failure (see lastErrorMessage).
-    func restoreLatest() -> [Patient]? {
-        do {
-            let dir = try ensureBackupDirectory()
-            let encURL = dir.appendingPathComponent(backupFileName)
+    // MARK: - Internals (encode + encrypt)
 
-            guard FileManager.default.fileExists(atPath: encURL.path) else {
-                lastErrorMessage = "No backup file found."
-                return nil
-            }
+    private func encryptedBackupData(from store: EMRStore, password: String) throws -> Data {
+        let payload = BackupPayload(
+            patients: store.patients,
+            notes: store.notes,
+            attachments: store.attachments
+        )
 
-            let encrypted = try Data(contentsOf: encURL)
-            let decrypted = try decrypt(encrypted)
-
-            let patients = try JSONDecoder().decode([Patient].self, from: decrypted)
-
-            lastBackupDate = readBackupDateFromDisk()
-            lastErrorMessage = nil
-            return patients
-        } catch {
-            lastErrorMessage = "Restore failed: \(error.localizedDescription)"
-            return nil
-        }
+        let json = try JSONEncoder().encode(payload)
+        return try encrypt(json: json, password: password)
     }
 
-    // MARK: - Paths
+    // MARK: - File format: MAGIC(4) + VER(1) + SALT(16) + NONCE(12) + TAG(16) + CIPHERTEXT
+
+    private let magic: [UInt8] = [0x45, 0x4D, 0x52, 0x31] // "EMR1"
+    private let version: UInt8 = 1
+    private let saltLen = 16
+    private let nonceLen = 12
+    private let tagLen = 16
+
+    private func looksLikeOurBackupFile(_ data: Data) -> Bool {
+        guard data.count >= 4 + 1 + saltLen + nonceLen + tagLen else { return false }
+        let m = [UInt8](data.prefix(4))
+        return m == magic
+    }
+
+    private func encrypt(json: Data, password: String) throws -> Data {
+        let salt = randomBytes(count: saltLen)
+        let key = deriveKey(password: password, salt: salt)
+
+        let nonceBytes = randomBytes(count: nonceLen)
+        let nonce = try AES.GCM.Nonce(data: nonceBytes)
+
+        let sealed = try AES.GCM.seal(json, using: key, nonce: nonce)
+
+        guard let tag = sealed.tag as Data? else {
+            throw NSError(domain: "BackupCenter", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Encryption failed (no tag)."])
+        }
+
+        // CryptoKit stores nonce separately; we store our own nonce bytes
+        let ciphertext = sealed.ciphertext
+
+        var out = Data()
+        out.append(contentsOf: magic)
+        out.append(version)
+        out.append(salt)
+        out.append(nonceBytes)
+        out.append(tag)
+        out.append(ciphertext)
+        return out
+    }
+
+    private func decryptPayload(_ data: Data, password: String) throws -> BackupPayload {
+        // Minimum length check
+        let minLen = 4 + 1 + saltLen + nonceLen + tagLen + 1
+        guard data.count >= minLen else {
+            throw NSError(domain: "BackupCenter", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "Backup file is too small."])
+        }
+
+        var idx = 0
+
+        // MAGIC
+        let fileMagic = [UInt8](data[idx..<idx+4]); idx += 4
+        guard fileMagic == magic else {
+            throw NSError(domain: "BackupCenter", code: -3,
+                          userInfo: [NSLocalizedDescriptionKey: "Not a valid EMR backup file."])
+        }
+
+        // VER
+        let ver = data[idx]; idx += 1
+        guard ver == version else {
+            throw NSError(domain: "BackupCenter", code: -4,
+                          userInfo: [NSLocalizedDescriptionKey: "Unsupported backup version."])
+        }
+
+        // SALT
+        let salt = data[idx..<idx+saltLen]; idx += saltLen
+        // NONCE
+        let nonceBytes = data[idx..<idx+nonceLen]; idx += nonceLen
+        // TAG
+        let tag = data[idx..<idx+tagLen]; idx += tagLen
+        // CIPHERTEXT
+        let ciphertext = data[idx...]
+
+        let key = deriveKey(password: password, salt: salt)
+        let nonce = try AES.GCM.Nonce(data: nonceBytes)
+
+        let sealed = try AES.GCM.SealedBox(nonce: nonce,
+                                          ciphertext: ciphertext,
+                                          tag: tag)
+
+        let plain = try AES.GCM.open(sealed, using: key)
+        return try JSONDecoder().decode(BackupPayload.self, from: plain)
+    }
+
+    // MARK: - Key derivation
+
+    private func deriveKey(password: String, salt: Data) -> SymmetricKey {
+        // PBKDF2-like using HKDF is acceptable for your app use-case,
+        // but we’ll keep it deterministic+portable:
+        let inputKey = SymmetricKey(data: Data(password.utf8))
+        return HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: inputKey,
+            salt: salt,
+            info: Data("NeurosurgeryEMR.Backup".utf8),
+            outputByteCount: 32
+        )
+    }
+
+    private func randomBytes(count: Int) -> Data {
+        var bytes = [UInt8](repeating: 0, count: count)
+        _ = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
+        return Data(bytes)
+    }
+
+    // MARK: - Local auto-backup file path
 
     private func ensureBackupDirectory() throws -> URL {
-        let fm = FileManager.default
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dir = base.appendingPathComponent("Backups", isDirectory: true)
 
-        // Prefer iCloud container if available
-        if let iCloudRoot = fm.url(forUbiquityContainerIdentifier: nil) {
-            let dir = iCloudRoot
-                .appendingPathComponent("Documents", isDirectory: true)
-                .appendingPathComponent(folderName, isDirectory: true)
-
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            return dir
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-
-        // Fallback: local Documents
-        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dir = docs.appendingPathComponent(folderName, isDirectory: true)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    private func writeBackupDate(_ date: Date, in dir: URL) throws {
-        let metaURL = dir.appendingPathComponent(metaFileName)
-        let metaString = String(Int(date.timeIntervalSince1970))
-        guard let data = metaString.data(using: .utf8) else { return }
-        try data.write(to: metaURL, options: .atomic)
+    private func autoBackupFileURL() throws -> URL {
+        let dir = try ensureBackupDirectory()
+        return dir.appendingPathComponent("AutoBackup.emrbackup")
     }
 
-    private func readBackupDateFromDisk() -> Date? {
-        do {
-            let dir = try ensureBackupDirectory()
-            let metaURL = dir.appendingPathComponent(metaFileName)
-            guard FileManager.default.fileExists(atPath: metaURL.path) else { return nil }
-
-            let data = try Data(contentsOf: metaURL)
-            let s = String(data: data, encoding: .utf8) ?? ""
-            let secs = TimeInterval(s.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-            return secs > 0 ? Date(timeIntervalSince1970: secs) : nil
-        } catch {
-            return nil
-        }
-    }
-
-    // MARK: - Crypto
-
-    private func encrypt(_ plaintext: Data) throws -> Data {
-        let key = try loadOrCreateKey()
-        let sealed = try AES.GCM.seal(plaintext, using: key)
-        guard let combined = sealed.combined else {
-            throw NSError(domain: "BackupCenter", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Encryption failed (no combined box)."])
-        }
-        return combined
-    }
-
-    private func decrypt(_ ciphertext: Data) throws -> Data {
-        let key = try loadOrCreateKey()
-        let box = try AES.GCM.SealedBox(combined: ciphertext)
-        return try AES.GCM.open(box, using: key)
-    }
-
-    private func loadOrCreateKey() throws -> SymmetricKey {
-        if let existing = keychainRead(service: keychainService, account: keychainAccount) {
-            return SymmetricKey(data: existing)
-        }
-
-        let key = SymmetricKey(size: .bits256)
-        let data = key.withUnsafeBytes { Data($0) }
-        keychainWrite(service: keychainService, account: keychainAccount, data: data)
-        return key
-    }
-
-    // MARK: - Keychain
-
-    private func keychainRead(service: String, account: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var item: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess else { return nil }
-        return item as? Data
-    }
-
-    private func keychainWrite(service: String, account: String, data: Data) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-
-        // delete then add
-        SecItemDelete(query as CFDictionary)
-
-        let add: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-
-        SecItemAdd(add as CFDictionary, nil)
+    private func writeAutoBackupFile(_ data: Data) throws {
+        let url = try autoBackupFileURL()
+        try data.write(to: url, options: [.atomic])
     }
 }

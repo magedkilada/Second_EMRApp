@@ -1,130 +1,58 @@
 import Foundation
 import CryptoKit
-import Security
-
-// MARK: - Encrypted Backup Envelope (JSON on disk)
-
-struct EncryptedBackupEnvelope: Codable {
-    var version: Int = 1
-    var alg: String = "AES.GCM"
-    var createdAt: Date = Date()
-
-    /// AES.GCM.SealedBox.combined base64 (nonce+ciphertext+tag)
-    var combined_b64: String
-}
-
-// MARK: - Crypto + Keychain
 
 enum BackupCrypto {
 
-    // Change these only if you intentionally want a different “namespace”
-    private static let keychainService = "com.magedkilada.Second_EMRApp.backup"
-    private static let keychainAccount = "backup-aes256-key-v1"
-
-    /// Returns a cross-device key (iCloud Keychain) if available.
-    static func getOrCreateKey() throws -> SymmetricKey {
-        if let data = try Keychain.read(service: keychainService, account: keychainAccount, synchronizableAny: true) {
-            return SymmetricKey(data: data)
-        }
-
-        // Create new key
-        let key = SymmetricKey(size: .bits256)
-        let data = key.withUnsafeBytes { Data($0) }
-
-        // Save as iCloud-synced Keychain item
-        try Keychain.save(service: keychainService, account: keychainAccount, data: data, synchronizable: true)
-
-        return key
+    // Simple container stored in the exported file
+    struct EncryptedBlob: Codable {
+        var v: Int = 1
+        var createdAt: Date
+        var saltB64: String
+        var combinedB64: String
     }
 
-    static func encryptJSON(_ plaintextJSON: Data) throws -> Data {
-        let key = try getOrCreateKey()
-        let sealed = try AES.GCM.seal(plaintextJSON, using: key)
+    static func encrypt(_ plaintext: Data, password: String) throws -> Data {
+        let salt = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
+        let key = try deriveKey(password: password, salt: salt)
 
+        let sealed = try AES.GCM.seal(plaintext, using: key)
         guard let combined = sealed.combined else {
-            throw NSError(domain: "BackupCrypto", code: -10, userInfo: [NSLocalizedDescriptionKey: "Failed to build combined sealed box."])
+            throw NSError(domain: "BackupCrypto", code: -1, userInfo: [NSLocalizedDescriptionKey: "Encryption failed (no combined data)."])
         }
 
-        let env = EncryptedBackupEnvelope(combined_b64: combined.base64EncodedString())
-        let out = try JSONEncoder().encode(env)
-        return out
+        let blob = EncryptedBlob(
+            createdAt: Date(),
+            saltB64: salt.base64EncodedString(),
+            combinedB64: combined.base64EncodedString()
+        )
+
+        return try JSONEncoder().encode(blob)
     }
 
-    static func decryptJSON(_ encryptedEnvelopeData: Data) throws -> Data {
-        let key = try getOrCreateKey()
-        let env = try JSONDecoder().decode(EncryptedBackupEnvelope.self, from: encryptedEnvelopeData)
+    static func decrypt(_ fileData: Data, password: String) throws -> Data {
+        let blob = try JSONDecoder().decode(EncryptedBlob.self, from: fileData)
 
-        guard let combined = Data(base64Encoded: env.combined_b64) else {
-            throw NSError(domain: "BackupCrypto", code: -11, userInfo: [NSLocalizedDescriptionKey: "Backup file is corrupted (base64 decode failed)."])
+        guard let salt = Data(base64Encoded: blob.saltB64),
+              let combined = Data(base64Encoded: blob.combinedB64) else {
+            throw NSError(domain: "BackupCrypto", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid backup file."])
         }
 
-        let sealed = try AES.GCM.SealedBox(combined: combined)
-        let plaintext = try AES.GCM.open(sealed, using: key)
-        return plaintext
-    }
-}
-
-// MARK: - Minimal Keychain helper
-
-private enum Keychain {
-
-    static func save(service: String, account: String, data: Data, synchronizable: Bool) throws {
-        // Delete existing (if any) then add
-        _ = try? delete(service: service, account: account, synchronizableAny: true)
-
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-
-        // iCloud Keychain sync
-        query[kSecAttrSynchronizable as String] = synchronizable ? kCFBooleanTrue : kCFBooleanFalse
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw NSError(domain: "Keychain", code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Keychain save failed (\(status))."])
-        }
+        let key = try deriveKey(password: password, salt: salt)
+        let box = try AES.GCM.SealedBox(combined: combined)
+        return try AES.GCM.open(box, using: key)
     }
 
-    static func read(service: String, account: String, synchronizableAny: Bool) throws -> Data? {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+    private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
+        // Password → key material
+        let inputKey = SymmetricKey(data: Data(password.utf8))
 
-        // Allow matching either synced or local copies
-        if synchronizableAny {
-            query[kSecAttrSynchronizable as String] = kSecAttrSynchronizableAny
-        }
-
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &out)
-
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else {
-            throw NSError(domain: "Keychain", code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Keychain read failed (\(status))."])
-        }
-
-        return out as? Data
-    }
-
-    static func delete(service: String, account: String, synchronizableAny: Bool) throws {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        if synchronizableAny {
-            query[kSecAttrSynchronizable as String] = kSecAttrSynchronizableAny
-        }
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw NSError(domain: "Keychain", code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Keychain delete failed (\(status))."])
-        }
+        // HKDF → 256-bit AES key
+        let key = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: inputKey,
+            salt: salt,
+            info: Data("NeuroEMR Backup v1".utf8),
+            outputByteCount: 32
+        )
+        return key
     }
 }
