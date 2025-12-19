@@ -29,22 +29,9 @@
 		4C2B79F72EEE153800CEDF91 /* Second_EMRAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Second_EMRAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		4CE996E32EF55D79006A4E53 /* Exceptions for "Second_EMRApp" folder in "Second_EMRApp" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Untitled.swift,
-			);
-			target = 4C2B79DF2EEE153700CEDF91 /* Second_EMRApp */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4C2B79E22EEE153700CEDF91 /* Second_EMRApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				4CE996E32EF55D79006A4E53 /* Exceptions for "Second_EMRApp" folder in "Second_EMRApp" target */,
-			);
 			path = Second_EMRApp;
 			sourceTree = "<group>";
 		};
