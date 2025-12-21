@@ -3,11 +3,11 @@ import UIKit
 import Foundation
 
 // NOTE: Requires your existing types:
-// - RecordNote (has: body, createdAt, updatedAt, isFinalized, etc.)
-// - Patient (has: nameEnglish, nameArabic, mrn, dob, gender, phone, etc.)
-// - PhysiciansStore (has: selectedPhysicianName or selectedPhysician?.name / clinic)
-// - DictationRecorder (has: toggleDictation(completion:), state, lastError)
-// - CursorTextView (SwiftUI wrapper around UITextView with selection binding)
+// - RecordNote (body, createdAt, updatedAt, isFinalized, etc.)
+// - Patient (nameEnglish, nameArabic, mrn, dob, gender, phone, etc.)
+// - PhysiciansStore (selectedPhysicianName)
+// - DictationRecorder (toggleDictation, state, lastError)
+// - CursorTextView (UITextView wrapper with selection binding)
 // - OpenAIService.shared.generate(instructions:input:)
 
 struct NoteEditorView: View {
@@ -47,11 +47,7 @@ struct NoteEditorView: View {
         return "Patient"
     }
 
-    private var clinicName: String {
-        // If your PhysiciansStore has clinic, use it; otherwise default.
-        // If you only have selectedPhysicianName, keep Neurosurgery.
-        return "Neurosurgery"
-    }
+    private var clinicName: String { "Neurosurgery" }
 
     private var physicianName: String {
         physicians.selectedPhysicianName ?? "—"
@@ -146,7 +142,7 @@ struct NoteEditorView: View {
             }
         }
 
-        // Sheet 1: AI / Translation result viewer
+        // ✅ Sheet 1: AI / Translation result viewer
         .sheet(isPresented: $showAIResultSheet) {
             NavigationStack {
                 ScrollView {
@@ -167,7 +163,7 @@ struct NoteEditorView: View {
             }
         }
 
-        // Sheet 2: Ask AI (question box)
+        // ✅ Sheet 2: Ask AI (question box)
         .sheet(isPresented: $showAIModeSheet) {
             NavigationStack {
                 Form {
@@ -234,7 +230,7 @@ struct NoteEditorView: View {
             .buttonStyle(.bordered)
             .disabled(note.isFinalized || dictation.state == .transcribing)
 
-            // AI Menu
+            // AI Menu (works even if note is finalized)
             Menu {
                 Button {
                     showAIModeSheet = true
@@ -248,12 +244,16 @@ struct NoteEditorView: View {
                     Label("Improve Note (preview)", systemImage: "sparkles")
                 }
             } label: {
-                Label("AI", systemImage: "sparkles")
+                if isPhone {
+                    Image(systemName: "sparkles").font(.title3)
+                } else {
+                    Label("AI", systemImage: "sparkles")
+                }
             }
             .buttonStyle(.bordered)
             .disabled(isAIWorking)
 
-            // Translate menu
+            // Translate menu (works even if note is finalized)
             Menu {
                 Picker("Language", selection: $targetLanguage) {
                     ForEach(languages, id: \.self) { Text($0).tag($0) }
@@ -265,7 +265,11 @@ struct NoteEditorView: View {
                     Label("Translate Now", systemImage: "globe")
                 }
             } label: {
-                Label("Translate", systemImage: "globe")
+                if isPhone {
+                    Image(systemName: "globe").font(.title3)
+                } else {
+                    Label("Translate", systemImage: "globe")
+                }
             }
             .buttonStyle(.bordered)
             .disabled(isAIWorking)
@@ -297,7 +301,6 @@ struct NoteEditorView: View {
         guard !note.isFinalized else { return }
 
         let ns = note.body as NSString
-
         let safeLoc = max(0, min(selectedRange.location, ns.length))
         let safeLen = max(0, min(selectedRange.length, ns.length - safeLoc))
         let safeRange = NSRange(location: safeLoc, length: safeLen)
@@ -317,7 +320,6 @@ struct NoteEditorView: View {
 
     // MARK: - AI / Translation Actions
 
-    /// Ask AI a free question; optional note context
     @MainActor
     private func runAIQuestion() async {
         let q = aiQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -351,7 +353,6 @@ If details are missing, ask clarifying questions.
 """,
                 input: input
             )
-
             aiResultText = result
             showAIModeSheet = false
             showAIResultSheet = true
@@ -360,7 +361,6 @@ If details are missing, ask clarifying questions.
         }
     }
 
-    /// Improve note wording/structure (preview result; doesn't overwrite note)
     @MainActor
     private func aiAssistImprove() async {
         let text = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -388,7 +388,6 @@ Return only the improved note text.
         }
     }
 
-    /// Translate note into targetLanguage (preview result; doesn't overwrite note)
     @MainActor
     private func runTranslate() async {
         let text = note.body.trimmingCharacters(in: .whitespacesAndNewlines)

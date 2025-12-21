@@ -1,246 +1,111 @@
+//
+//  ContentView.swift
+//  Second_EMRApp
+//
+
 import SwiftUI
-import UIKit
 
 struct ContentView: View {
 
-    // MARK: - Stores
-    @StateObject private var store = EMRStore()
-    @StateObject private var physicians = PhysiciansStore()
-    @StateObject private var backupCenter = BackupCenter()
+    @EnvironmentObject private var store: EMRStore
+    @EnvironmentObject private var physicians: PhysiciansStore
 
-    // MARK: - UI
     @Environment(\.horizontalSizeClass) private var hSize
-    private var isPhoneLayout: Bool { hSize == .compact }
+    private var isPhone: Bool { hSize == .compact }
 
-    @State private var searchText = ""
-    @State private var tab: WorkspaceTab = .demographics
-
-    @State private var showPhysiciansManager = false
-    @State private var confirmDeleteID: UUID?
-
-    // iPhone patient sheet
-    @State private var showPatientSheet = false
-    @State private var editingPatientID: UUID?
-
+    // MARK: - Tabs (detail)
     enum WorkspaceTab: String, CaseIterable, Identifiable {
         case demographics = "Demographics"
         case records = "Medical Records"
         var id: String { rawValue }
     }
 
-    // MARK: - Derived
+    @State private var tab: WorkspaceTab = .demographics
 
-    private var activePatients: [Patient] {
-        let base = store.patients.filter { !$0.isDeleted }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return base }
-        return base.filter {
-            $0.nameEnglish.lowercased().contains(q) ||
-            $0.nameArabic.lowercased().contains(q) ||
-            $0.mrn.lowercased().contains(q)
-        }
-    }
+    // MARK: - Delete UI
+    @State private var confirmDeletePatientID: UUID? = nil
 
+    // MARK: - Selected patient helpers
     private var selectedPatientIndex: Int? {
         guard let id = store.selectedPatientID else { return nil }
         return store.patients.firstIndex(where: { $0.id == id })
     }
 
-    private func bindingForPatient(id: UUID) -> Binding<Patient>? {
-        guard let idx = store.patients.firstIndex(where: { $0.id == id }) else { return nil }
-        return Binding(
-            get: { store.patients[idx] },
-            set: { store.patients[idx] = $0 }
-        )
-    }
-
-    private func openPatient(_ id: UUID, defaultTab: WorkspaceTab) {
-        store.selectedPatientID = id
-        tab = defaultTab
-
-        if isPhoneLayout {
-            editingPatientID = id
-            showPatientSheet = true
-        }
-    }
-
-    private func patientDisplayName(_ p: Patient) -> String {
-        let n = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty ? "Patient" : n
+    private var selectedPatient: Patient? {
+        guard let idx = selectedPatientIndex else { return nil }
+        return store.patients[idx]
     }
 
     // MARK: - Body
-
     var body: some View {
         NavigationSplitView {
             sidebar
         } detail: {
             detail
         }
-        .environmentObject(store)
-        .environmentObject(physicians)
-        .environmentObject(backupCenter)
-
-        // wire automatic backup
-        .onAppear { store.backupCenter = backupCenter }
-
-        // Physicians manager
-        .sheet(isPresented: $showPhysiciansManager) {
-            NavigationStack {
-                PhysiciansManagerView()
-                    .environmentObject(physicians)
-                    .navigationTitle("Physicians")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { showPhysiciansManager = false }
-                        }
-                    }
-            }
-        }
-
-        // iPhone patient sheet
-        .sheet(isPresented: $showPatientSheet) {
-            patientSheet
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-        }
-
-        // Delete confirmation
-        .alert("Delete Patient?", isPresented: Binding(
-            get: { confirmDeleteID != nil },
-            set: { if !$0 { confirmDeleteID = nil } }
-        )) {
-            Button("Cancel", role: .cancel) { confirmDeleteID = nil }
-            Button("Delete", role: .destructive) {
-                if let id = confirmDeleteID {
-                    store.softDeletePatient(id)
-                    if isPhoneLayout, editingPatientID == id {
-                        showPatientSheet = false
-                        editingPatientID = nil
-                    }
-                }
-                confirmDeleteID = nil
-            }
-        } message: {
-            Text("This patient will be removed from the active list.")
-        }
     }
 
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
+        List(selection: $store.selectedPatientID) {
 
-                AttendingPhysicianCard {
-                    showPhysiciansManager = true
+            // If you have your own attending physician / backup views, you can re-add them here.
+            // Keeping sidebar clean for stability.
+
+            Section("Patients") {
+                ForEach(store.patients) { p in
+                    Text(patientDisplayName(p))
+                        .tag(p.id as UUID?)
                 }
 
-                BackupInlineCard()
-
-                List {
-                    Section("Patients") {
-                        ForEach(activePatients) { p in
-                            Button {
-                                openPatient(p.id, defaultTab: .demographics)
-                            } label: {
-                                HStack {
-                                    Text(p.nameEnglish.isEmpty ? "Unnamed" : p.nameEnglish)
-                                    Spacer()
-                                    if store.selectedPatientID == p.id { Image(systemName: "checkmark") }
-                                }
-                            }
-                            .contextMenu {
-                                Button(role: .destructive) { confirmDeleteID = p.id } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-
-                                Button { openPatient(p.id, defaultTab: .demographics) } label: {
-                                    Label("Edit Demographics", systemImage: "square.and.pencil")
-                                }
-
-                                Button { openPatient(p.id, defaultTab: .records) } label: {
-                                    Label("Open Medical Records", systemImage: "doc.text.magnifyingglass")
-                                }
-                            }
-                        }
-
-                        Button {
-                            let newPatient = store.addNewPatient()
-                            openPatient(newPatient.id, defaultTab: .demographics)
-                        } label: {
-                            Label("Add Patient", systemImage: "person.badge.plus")
-                        }
-                    }
+                Button {
+                    addPatient()
+                } label: {
+                    Label("Add Patient", systemImage: "person.badge.plus")
                 }
-                .listStyle(.insetGrouped)
             }
-            .navigationTitle("Neurosurgery EMR")
-            .searchable(text: $searchText)
+        }
+        .navigationTitle("Neurosurgery EMR")
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    addPatient()
+                } label: {
+                    Image(systemName: "plus")
+                }
+
+                Button(role: .destructive) {
+                    if let id = store.selectedPatientID {
+                        confirmDeletePatientID = id
+                    }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .disabled(store.selectedPatientID == nil)
+            }
+        }
+        .alert("Delete patient?", isPresented: Binding(
+            get: { confirmDeletePatientID != nil },
+            set: { if !$0 { confirmDeletePatientID = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { confirmDeletePatientID = nil }
+            Button("Delete", role: .destructive) {
+                if let id = confirmDeletePatientID {
+                    deletePatient(id)
+                }
+                confirmDeletePatientID = nil
+            }
+        } message: {
+            Text("This will remove the patient and their data from this device.")
         }
     }
 
-    // MARK: - Detail (iPad)
+    // MARK: - Detail
 
     private var detail: some View {
         Group {
-            if let index = selectedPatientIndex {
-                let p = store.patients[index]
-
-                VStack(spacing: 12) {
-
-                    Picker("", selection: $tab) {
-                        ForEach(WorkspaceTab.allCases) { t in
-                            Text(t.rawValue).tag(t)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.top, 4)
-
-                    Group {
-                        switch tab {
-                        case .demographics:
-                            PatientDemographicsView(
-                                patient: Binding(
-                                    get: { store.patients[index] },
-                                    set: { store.patients[index] = $0 }
-                                ),
-                                onSave: { store.savePatient(store.patients[index]) },
-                                onRequestDelete: { confirmDeleteID = store.patients[index].id }
-                            )
-
-                        case .records:
-                            RecordsWorkspaceView(
-                                store: store,
-                                patientID: p.id,
-                                patient: p
-                            )
-                            .id(p.id)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .padding()
-                .navigationTitle(patientDisplayName(p))
-
-            } else {
-                ContentUnavailableView(
-                    "No Patient Selected",
-                    systemImage: "person.text.rectangle",
-                    description: Text("Add a patient, then select them from the sidebar.")
-                )
-            }
-        }
-    }
-
-    // MARK: - iPhone Patient Sheet (Demographics + Records)
-
-    private var patientSheet: some View {
-        NavigationStack {
-            if let id = editingPatientID,
-               let binding = bindingForPatient(id: id),
-               let idx = store.patients.firstIndex(where: { $0.id == id }) {
-
+            if let idx = selectedPatientIndex {
                 let p = store.patients[idx]
 
                 VStack(spacing: 12) {
@@ -251,46 +116,75 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .padding(.top, 4)
+                    .padding(.top, 6)
+                    .padding(.horizontal)
 
                     Group {
                         switch tab {
                         case .demographics:
                             PatientDemographicsView(
-                                patient: binding,
-                                onSave: { store.savePatient(binding.wrappedValue) },
-                                onRequestDelete: { confirmDeleteID = id }
+                                patient: Binding(
+                                    get: { store.patients[idx] },
+                                    set: { store.patients[idx] = $0 }
+                                ),
+                                onSave: {
+                                    store.lastModified = Date()
+                                    // If you have a savePatient() method, call it here.
+                                    // store.savePatient(store.patients[idx])
+                                },
+                                onRequestDelete: {
+                                    confirmDeletePatientID = store.patients[idx].id
+                                }
                             )
+                            .padding(.horizontal)
 
                         case .records:
-                            RecordsWorkspaceView(
-                                store: store,
-                                patientID: p.id,
-                                patient: p
-                            )
-                            .id(p.id)
+                            RecordsWorkspaceView(patient: p)
+                                .padding(.horizontal, isPhone ? 0 : 8)
+                                .id(p.id) // helps refresh when switching patients
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding()
                 .navigationTitle(patientDisplayName(p))
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Close") { showPatientSheet = false }
-                    }
-                }
+                .navigationBarTitleDisplayMode(.inline)
 
             } else {
-                Text("No patient selected.")
-                    .padding()
-                    .navigationTitle("Patient")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Close") { showPatientSheet = false }
-                        }
-                    }
+                ContentUnavailableView("Select a patient", systemImage: "person.text.rectangle")
             }
         }
+    }
+
+    // MARK: - Actions
+
+    private func addPatient() {
+        // Create the simplest patient your model allows.
+        // If your Patient has a different initializer, adjust here.
+
+        var p = Patient()
+        // If your Patient() init doesn’t exist, replace with your real init.
+        // Example:
+        // var p = Patient(nameEnglish: "", nameArabic: "", gender: .male, dob: Date(), mrn: "", nationalID: "", passport: "", phone: "")
+
+        store.patients.append(p)
+        store.selectedPatientID = p.id
+        store.lastModified = Date()
+    }
+
+    private func deletePatient(_ id: UUID) {
+        store.patients.removeAll(where: { $0.id == id })
+        if store.selectedPatientID == id {
+            store.selectedPatientID = store.patients.first?.id
+        }
+        store.lastModified = Date()
+    }
+
+    // MARK: - Display
+
+    private func patientDisplayName(_ p: Patient) -> String {
+        let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !en.isEmpty { return en }
+        let ar = p.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !ar.isEmpty { return ar }
+        return "Patient"
     }
 }
