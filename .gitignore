@@ -22,3 +22,7 @@ xcuserdata/
 *.xcuserstate
 xcuserdata/
 Second_EMRApp.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Secrets
+Second_EMRApp/Secrets.xcconfig
+*.xcconfig
