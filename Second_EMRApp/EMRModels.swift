@@ -77,7 +77,17 @@ FAMILY HISTORY:
 REVIEW OF SYSTEMS:  
 
 PHYSICAL EXAMINATION:  
-VITALS:  
+PHYSICAL EXAMINATION:  
+
+VITALS:
+BP: ____ / ____ mmHg
+HR: ____ bpm
+Temp: ____ °C
+O₂ Sat: ____ %
+
+GENERAL:  
+NEUROLOGIC:  
+OTHER SYSTEMS:   
 GENERAL:  
 NEUROLOGIC:  
 OTHER SYSTEMS:  
@@ -89,7 +99,17 @@ PLAN:
             return """
 SUBJECTIVE:  
 OBJECTIVE:  
-Vitals:  
+PHYSICAL EXAMINATION:  
+
+VITALS:
+BP: ____ / ____ mmHg
+HR: ____ bpm
+Temp: ____ °C
+O₂ Sat: ____ %
+
+GENERAL:  
+NEUROLOGIC:  
+OTHER SYSTEMS:   
 Exam:  
 Labs / Imaging:  
 

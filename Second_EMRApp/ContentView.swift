@@ -8,8 +8,9 @@ struct ContentView: View {
     @StateObject private var physicians = PhysiciansStore()
     @StateObject private var backupCenter = BackupCenter()
 
-    // MARK: - UI State
+    // MARK: - UI
     @Environment(\.horizontalSizeClass) private var hSize
+    private var isPhoneLayout: Bool { hSize == .compact }
 
     @State private var searchText = ""
     @State private var tab: WorkspaceTab = .demographics
@@ -17,7 +18,7 @@ struct ContentView: View {
     @State private var showPhysiciansManager = false
     @State private var confirmDeleteID: UUID?
 
-    // iPhone “Patient Sheet” (Demographics + Records)
+    // iPhone patient sheet
     @State private var showPatientSheet = false
     @State private var editingPatientID: UUID?
 
@@ -27,16 +28,12 @@ struct ContentView: View {
         var id: String { rawValue }
     }
 
-    // MARK: - Helpers
-
-    private var isPhoneLayout: Bool { hSize == .compact }
+    // MARK: - Derived
 
     private var activePatients: [Patient] {
         let base = store.patients.filter { !$0.isDeleted }
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return base }
-        let q = trimmed.lowercased()
-
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return base }
         return base.filter {
             $0.nameEnglish.lowercased().contains(q) ||
             $0.nameArabic.lowercased().contains(q) ||
@@ -57,7 +54,7 @@ struct ContentView: View {
         )
     }
 
-    private func openPatient(_ id: UUID, defaultTab: WorkspaceTab = .demographics) {
+    private func openPatient(_ id: UUID, defaultTab: WorkspaceTab) {
         store.selectedPatientID = id
         tab = defaultTab
 
@@ -65,6 +62,11 @@ struct ContentView: View {
             editingPatientID = id
             showPatientSheet = true
         }
+    }
+
+    private func patientDisplayName(_ p: Patient) -> String {
+        let n = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+        return n.isEmpty ? "Patient" : n
     }
 
     // MARK: - Body
@@ -79,10 +81,8 @@ struct ContentView: View {
         .environmentObject(physicians)
         .environmentObject(backupCenter)
 
-        // ✅ Wire automatic backup
-        .onAppear {
-            store.backupCenter = backupCenter
-        }
+        // wire automatic backup
+        .onAppear { store.backupCenter = backupCenter }
 
         // Physicians manager
         .sheet(isPresented: $showPhysiciansManager) {
@@ -98,7 +98,7 @@ struct ContentView: View {
             }
         }
 
-        // ✅ iPhone patient sheet (Demographics + Medical Records)
+        // iPhone patient sheet
         .sheet(isPresented: $showPatientSheet) {
             patientSheet
                 .presentationDetents([.large])
@@ -114,8 +114,6 @@ struct ContentView: View {
             Button("Delete", role: .destructive) {
                 if let id = confirmDeleteID {
                     store.softDeletePatient(id)
-
-                    // If iPhone sheet was showing this patient, close it
                     if isPhoneLayout, editingPatientID == id {
                         showPatientSheet = false
                         editingPatientID = nil
@@ -149,27 +147,19 @@ struct ContentView: View {
                                 HStack {
                                     Text(p.nameEnglish.isEmpty ? "Unnamed" : p.nameEnglish)
                                     Spacer()
-                                    if store.selectedPatientID == p.id {
-                                        Image(systemName: "checkmark")
-                                    }
+                                    if store.selectedPatientID == p.id { Image(systemName: "checkmark") }
                                 }
                             }
                             .contextMenu {
-                                Button(role: .destructive) {
-                                    confirmDeleteID = p.id
-                                } label: {
+                                Button(role: .destructive) { confirmDeleteID = p.id } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
 
-                                Button {
-                                    openPatient(p.id, defaultTab: .demographics)
-                                } label: {
+                                Button { openPatient(p.id, defaultTab: .demographics) } label: {
                                     Label("Edit Demographics", systemImage: "square.and.pencil")
                                 }
 
-                                Button {
-                                    openPatient(p.id, defaultTab: .records)
-                                } label: {
+                                Button { openPatient(p.id, defaultTab: .records) } label: {
                                     Label("Open Medical Records", systemImage: "doc.text.magnifyingglass")
                                 }
                             }
@@ -195,6 +185,8 @@ struct ContentView: View {
     private var detail: some View {
         Group {
             if let index = selectedPatientIndex {
+                let p = store.patients[index]
+
                 VStack(spacing: 12) {
 
                     Picker("", selection: $tab) {
@@ -204,7 +196,6 @@ struct ContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .padding(.top, 4)
-                    .zIndex(1)
 
                     Group {
                         switch tab {
@@ -214,28 +205,23 @@ struct ContentView: View {
                                     get: { store.patients[index] },
                                     set: { store.patients[index] = $0 }
                                 ),
-                                onSave: {
-                                    store.savePatient(store.patients[index])
-                                },
-                                onRequestDelete: {
-                                    confirmDeleteID = store.patients[index].id
-                                }
+                                onSave: { store.savePatient(store.patients[index]) },
+                                onRequestDelete: { confirmDeleteID = store.patients[index].id }
                             )
 
                         case .records:
                             RecordsWorkspaceView(
                                 store: store,
-                                patientID: store.patients[index].id,
-                                patient: store.patients[index]
+                                patientID: p.id,
+                                patient: p
                             )
-                            .id(store.patients[index].id)
+                            .id(p.id)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .padding()
-                .navigationTitle(tab.rawValue)
-                .navigationBarBackButtonHidden(true)
+                .navigationTitle(patientDisplayName(p))
 
             } else {
                 ContentUnavailableView(
@@ -255,6 +241,8 @@ struct ContentView: View {
                let binding = bindingForPatient(id: id),
                let idx = store.patients.firstIndex(where: { $0.id == id }) {
 
+                let p = store.patients[idx]
+
                 VStack(spacing: 12) {
 
                     Picker("", selection: $tab) {
@@ -270,29 +258,23 @@ struct ContentView: View {
                         case .demographics:
                             PatientDemographicsView(
                                 patient: binding,
-                                onSave: {
-                                    store.savePatient(binding.wrappedValue)
-                                    showPatientSheet = false
-                                },
-                                onRequestDelete: {
-                                    confirmDeleteID = id
-                                    showPatientSheet = false
-                                }
+                                onSave: { store.savePatient(binding.wrappedValue) },
+                                onRequestDelete: { confirmDeleteID = id }
                             )
 
                         case .records:
                             RecordsWorkspaceView(
                                 store: store,
-                                patientID: store.patients[idx].id,
-                                patient: store.patients[idx]
+                                patientID: p.id,
+                                patient: p
                             )
-                            .id(store.patients[idx].id)
+                            .id(p.id)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .padding()
-                .navigationTitle(store.patients[idx].nameEnglish.isEmpty ? "Patient" : store.patients[idx].nameEnglish)
+                .navigationTitle(patientDisplayName(p))
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Close") { showPatientSheet = false }

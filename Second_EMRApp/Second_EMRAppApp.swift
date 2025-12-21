@@ -1,16 +1,15 @@
 import SwiftUI
-
 @main
-struct Second_EMRApp: App {
-
-    @StateObject private var store = EMRStore()
-    @StateObject private var backupCenter = BackupCenter()
+struct Second_EMRAppApp: App {
+    init() {
+        print("🚀 APP LAUNCHED")
+        print("API KEY:",
+              Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") ?? "NIL")
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(store)
-                .environmentObject(backupCenter)
         }
     }
 }

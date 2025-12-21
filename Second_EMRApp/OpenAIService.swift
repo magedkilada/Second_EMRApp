@@ -1,21 +1,13 @@
 import Foundation
 
-enum OpenAIConfig {
-    static let model = "gpt-4.1"
-    static let endpoint = URL(string: "https://api.openai.com/v1/responses")!
-    static let apiKeyPlistKey = "OPENAI_API_KEY"
-}
-
 final class OpenAIService {
     static let shared = OpenAIService()
     private init() {}
 
+    // Reads the key from Info.plist (which you already confirmed prints correctly)
     private var apiKey: String {
-        if let k = Bundle.main.object(forInfoDictionaryKey: OpenAIConfig.apiKeyPlistKey) as? String,
-           !k.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return k.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return ""
+        let raw = (Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String) ?? ""
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// One-shot text generation (no tools, no streaming)
@@ -26,9 +18,9 @@ final class OpenAIService {
         temperature: Double = 0.2
     ) async throws -> String {
 
-        guard !apiKey.isEmpty else {
+        guard !apiKey.isEmpty, !apiKey.contains("$(") else {
             throw NSError(domain: "OpenAI", code: -1, userInfo: [
-                NSLocalizedDescriptionKey: "Missing OPENAI_API_KEY in Info.plist"
+                NSLocalizedDescriptionKey: "Missing OPENAI_API_KEY in app Info settings."
             ])
         }
 
