@@ -130,4 +130,24 @@ private extension UIApplication {
         while let presented = top.presentedViewController { top = presented }
         return top
     }
+    // MARK: - Share URL (attachments)
+
+    static func shareURL(_ url: URL, title: String = "Attachment") {
+        let vc = UIActivityViewController(activityItems: [title, url], applicationActivities: nil)
+        UIApplication.shared.topMostViewController?.present(vc, animated: true)
+    }
+
+    // MARK: - Print file (PDF / Image)
+
+    static func printFile(_ url: URL, jobName: String = "Attachment") {
+        let pc = UIPrintInteractionController.shared
+
+        let info = UIPrintInfo(dictionary: nil)
+        info.outputType = .general
+        info.jobName = jobName
+        pc.printInfo = info
+
+        pc.printingItem = url
+        pc.present(animated: true, completionHandler: nil)
+    }
 }

@@ -1,114 +1,139 @@
-import Foundation
 import SwiftUI
 
+// MARK: - Manager
+
 struct PhysiciansManagerView: View {
+    @EnvironmentObject private var physicians: PhysiciansStore
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: PhysiciansStore
 
     @State private var showAdd = false
-    @State private var editing: Physician? = nil
-    @State private var confirmDelete: Physician? = nil
-    @State private var showCantDeleteLast = false
+    @State private var editTarget: Physician? = nil
+
+    @State private var pendingDelete: Physician? = nil
+    @State private var confirmDelete = false
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(store.physicians) { p in
-                    HStack(spacing: 12) {
-
-                        // ✅ Selection tap area (only this selects)
-                        Button {
-                            store.selectedPhysicianID = p.id
-                            store.save()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(p.name).font(.headline)
-                                Text("\(p.specialty) • \(p.clinic)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                if physicians.physicians.isEmpty {
+                    ContentUnavailableView("No physicians",
+                                           systemImage: "person.crop.circle.badge.questionmark")
+                } else {
+                    Section("Physicians") {
+                        ForEach(physicians.physicians) { p in
+                            PhysicianRow(
+                                physician: p,
+                                isSelected: physicians.selectedPhysicianID == p.id,
+                                onSelect: {
+                                    physicians.selectedPhysicianID = p.id
+                                    physicians.save()
+                                },
+                                onEdit: { editTarget = p },
+                                onDelete: {
+                                    pendingDelete = p
+                                    confirmDelete = true
+                                }
+                            )
                         }
-                        .buttonStyle(.plain)
-
-                        Spacer()
-
-                        if store.selectedPhysicianID == p.id {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.blue)
-                        }
-
-                        // ✅ Edit
-                        Button {
-                            editing = p
-                        } label: {
-                            Image(systemName: "pencil")
-                        }
-                        .buttonStyle(.borderless)
-
-                        // ✅ Delete
-                        Button(role: .destructive) {
-                            requestDelete(p)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) { requestDelete(p) } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                        Button { editing = p } label: {
-                            Label("Edit", systemImage: "pencil")
-                        }
-                        .tint(.blue)
                     }
                 }
             }
-            .navigationTitle("Physicians")
+            .navigationTitle("Manage Physicians")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showAdd = true } label: { Image(systemName: "plus") }
+                    Button {
+                        showAdd = true
+                    } label: {
+                        Label("Add", systemImage: "plus")
+                    }
                 }
             }
+
+            // ✅ Delete confirmation
+            .alert("Delete physician?", isPresented: $confirmDelete) {
+                Button("Cancel", role: .cancel) { pendingDelete = nil }
+                Button("Delete", role: .destructive) {
+                    guard let p = pendingDelete else { return }
+                    physicians.delete(id: p.id)
+                    pendingDelete = nil
+                }
+            } message: {
+                Text("This cannot be undone.")
+            }
+
+            // ✅ Add
             .sheet(isPresented: $showAdd) {
                 AddPhysicianView { newPhysician in
-                    store.add(newPhysician)
+                    physicians.add(newPhysician)
                 }
             }
-            .sheet(item: $editing) { p in
+
+            // ✅ Edit
+            .sheet(item: $editTarget) { p in
                 EditPhysicianView(physician: p) { updated in
-                    store.update(updated)
+                    physicians.update(updated)
                 }
-            }
-            .alert("Delete physician?", isPresented: Binding(
-                get: { confirmDelete != nil },
-                set: { if !$0 { confirmDelete = nil } }
-            )) {
-                Button("Delete", role: .destructive) {
-                    if let p = confirmDelete { store.delete(id: p.id) }
-                    confirmDelete = nil
-                }
-                Button("Cancel", role: .cancel) { confirmDelete = nil }
-            } message: {
-                Text("This will remove the physician from your list.")
-            }
-            .alert("Cannot delete", isPresented: $showCantDeleteLast) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("You must keep at least one physician in the list.")
             }
         }
     }
+}
 
-    private func requestDelete(_ p: Physician) {
-        if store.physicians.count <= 1 {
-            showCantDeleteLast = true
-        } else {
-            confirmDelete = p
+// MARK: - Row (keeps compiler happy)
+
+private struct PhysicianRow: View {
+    let physician: Physician
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(physician.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unnamed" : physician.name)
+                    .font(.headline)
+
+                let line = detailLine
+                if !line.isEmpty {
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+
+            Menu {
+                Button("Select") { onSelect() }
+                Button("Edit") { onEdit() }
+                Divider()
+                Button("Delete", role: .destructive) { onDelete() }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .imageScale(.large)
+            }
+            .buttonStyle(.plain)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect() }
+    }
+
+    private var detailLine: String {
+        let spec = physician.specialty.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clinic = physician.clinic.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !spec.isEmpty && !clinic.isEmpty { return "\(spec) • \(clinic)" }
+        if !spec.isEmpty { return spec }
+        if !clinic.isEmpty { return clinic }
+        return ""
     }
 }
 

@@ -1,415 +1,389 @@
 import SwiftUI
 import UIKit
-import Foundation
-
-// NOTE: Requires your existing types:
-// - RecordNote (body, createdAt, updatedAt, isFinalized, etc.)
-// - Patient (nameEnglish, nameArabic, mrn, dob, gender, phone, etc.)
-// - PhysiciansStore (selectedPhysicianName)
-// - DictationRecorder (toggleDictation, state, lastError)
-// - CursorTextView (UITextView wrapper with selection binding)
-// - OpenAIService.shared.generate(instructions:input:)
 
 struct NoteEditorView: View {
-    @Binding var note: RecordNote
+
+    // MARK: - Inputs
     let patient: Patient
-    let onSave: (RecordNote) -> Void
+    let noteID: UUID
 
-    @EnvironmentObject private var physicians: PhysiciansStore
-    @Environment(\.horizontalSizeClass) private var hSize
-    private var isPhone: Bool { hSize == .compact }
+    // MARK: - Environment
+    @EnvironmentObject private var store: EMRStore
+    @Environment(\.dismiss) private var dismiss
 
-    @StateObject private var dictation = DictationRecorder()
+    // MARK: - Local state
+    @State private var note: RecordNote? = nil
+    @State private var editorText: String = ""
+    @State private var isDirty: Bool = false
 
-    // Cursor selection tracking
-    @State private var selectedRange: NSRange = NSRange(location: 0, length: 0)
+    // Save UX
+    @State private var showSavedToast: Bool = false
 
-    // MARK: - AI / Translation State
-    @State private var showAIResultSheet = false
-    @State private var showAIModeSheet = false
+    // Confirmations
+    @State private var showConfirmDelete: Bool = false
+    @State private var showReplaceTemplateConfirm: Bool = false
+    @State private var pendingTemplateText: String = ""
 
-    @State private var aiResultText: String = ""
-    @State private var aiQuestion: String = ""
+    // Share / Print
+    @State private var showShareSheet: Bool = false
+    @State private var shareItems: [Any] = []
 
-    @State private var isAIWorking: Bool = false
-    @State private var useNoteContextForAI: Bool = true
+    // Batch print
+    @State private var showBatchPrintSheet: Bool = false
 
-    @State private var targetLanguage: String = "Arabic"
-    private let languages: [String] = ["Arabic", "English", "French", "German", "Spanish", "Italian"]
+    // Debounced autosave
+    @State private var autosaveWorkItem: DispatchWorkItem? = nil
 
-    // MARK: - Header helpers
+    // MARK: - Derived
+    private var canEdit: Bool { !(note?.isFinalized ?? false) }
 
     private var patientDisplayName: String {
         let en = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !en.isEmpty { return en }
         let ar = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !en.isEmpty { return en }
         if !ar.isEmpty { return ar }
         return "Patient"
     }
 
-    private var clinicName: String { "Neurosurgery" }
-
-    private var physicianName: String {
-        physicians.selectedPhysicianName ?? "—"
+    private var headerPhysicianLine: String {
+        store.treatingPhysicianName
     }
 
-    private var mrnText: String {
-        let m = patient.mrn.trimmingCharacters(in: .whitespacesAndNewlines)
-        return m.isEmpty ? "—" : m
-    }
-
-    private var phoneText: String {
-        let p = patient.phone.trimmingCharacters(in: .whitespacesAndNewlines)
-        return p.isEmpty ? "—" : p
-    }
-
-    private var dobText: String {
-        patient.dob.formatted(date: .abbreviated, time: .omitted)
-    }
-
-    private var sexText: String {
-        patient.gender.rawValue
-    }
-
-    private var createdText: String {
-        note.createdAt.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private var updatedText: String {
-        note.updatedAt.formatted(date: .abbreviated, time: .shortened)
+    private var headerClinic: String {
+        store.clinicName
     }
 
     // MARK: - Body
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 10) {
 
-            // Header card
-            GroupBox {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(patientDisplayName)
-                        .font(.headline)
-                        .lineLimit(1)
+            // Header
+            VStack(alignment: .leading, spacing: 4) {
+                Text(patientDisplayName)
+                    .font(.largeTitle).bold()
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        headerLine(label: "MRN", value: mrnText)
-                        headerLine(label: "DOB", value: dobText)
-                        headerLine(label: "Sex", value: sexText)
-                        headerLine(label: "Clinic", value: clinicName)
-                        headerLine(label: "Physician", value: physicianName)
-                        headerLine(label: "Note Created", value: createdText)
-                        headerLine(label: "Note Updated", value: updatedText)
+                Text(headerPhysicianLine)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
 
-                        if phoneText != "—" {
-                            headerLine(label: "Phone", value: phoneText)
+                Text(headerClinic)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Divider().padding(.top, 6)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+
+            // Editor
+            TextEditor(text: $editorText)
+                .font(.body)
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground)))
+                .padding(.horizontal)
+                .disabled(!canEdit)
+                .onChange(of: editorText) { _, _ in
+                    guard canEdit else { return }
+                    markDirtyAndAutosave()
+                }
+
+            // Bottom action bar
+            bottomBar
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+        }
+        .navigationTitle(note?.type.rawValue ?? "Note")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { topRightToolbar }
+        .onAppear { loadNoteIfNeeded() }
+        .onDisappear { saveSilentlyIfDirty() }
+
+        // Share Sheet
+        .sheet(isPresented: $showShareSheet) {
+            NoteShareSheet(items: shareItems)
+        }
+
+        // Batch Print
+        .sheet(isPresented: $showBatchPrintSheet) {
+            BatchPrintView(patient: patient)
+                .environmentObject(store)
+        }
+
+        // Delete confirm
+        .alert("Delete note?", isPresented: $showConfirmDelete) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) { deleteNow() }
+        } message: {
+            Text("This will permanently remove this note from this device.")
+        }
+
+        // Template replace confirm
+        .alert("Replace current note with template?", isPresented: $showReplaceTemplateConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Replace", role: .destructive) {
+                editorText = pendingTemplateText
+                markDirtyAndAutosave()
+            }
+        } message: {
+            Text("This will overwrite the current note text.")
+        }
+
+        // Saved toast
+        .overlay(alignment: .bottom) {
+            if showSavedToast {
+                Text("Saved ✓")
+                    .font(.headline)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .padding(.bottom, 18)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: showSavedToast)
+    }
+
+    // MARK: - Top toolbar (AI / Translate placeholders + Template)
+    @ToolbarContentBuilder
+    private var topRightToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+
+            Menu {
+                // Template menu
+                Menu("Template") {
+                    ForEach(RecordNoteType.allCases) { t in
+                        Button(t.rawValue) {
+                            pendingTemplateText = store.templateText(for: t)
+                            showReplaceTemplateConfirm = true
                         }
                     }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
                 }
-            }
 
-            // Editor + bottom bar
-            VStack(spacing: 0) {
-
-                CursorTextView(
-                    text: $note.body,
-                    selectedRange: $selectedRange,
-                    isEditable: !note.isFinalized
-                )
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
-                .padding(.bottom, 8)
-
-                controlsBar
-            }
-
-            if let err = dictation.lastError {
-                Text(err)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
-
-            if note.isFinalized {
-                Text("This note is finalized. You can still use AI and Translate, but editing is locked.")
-                    .foregroundStyle(.secondary)
-                    .font(.footnote)
-            }
-        }
-        .onAppear {
-            // Put cursor at end the first time this editor opens
-            if selectedRange.location == 0 && selectedRange.length == 0 && !note.body.isEmpty {
-                selectedRange = NSRange(location: (note.body as NSString).length, length: 0)
-            }
-        }
-
-        // ✅ Sheet 1: AI / Translation result viewer
-        .sheet(isPresented: $showAIResultSheet) {
-            NavigationStack {
-                ScrollView {
-                    Text(aiResultText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .padding()
+                // Placeholders for AI / Translate (wire later)
+                // These buttons are intentionally safe stubs (no compile dependencies).
+                Menu("AI") {
+                    Button("Improve note (replace)") { /* wire to AI later */ }
+                    Button("Improve note (copy)") { /* wire to AI later */ }
+                    Button("Ask about note") { /* wire to AI later */ }
+                    Button("Clear AI") { /* wire to AI later */ }
                 }
-                .navigationTitle("AI / Translation")
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Copy") { UIPasteboard.general.string = aiResultText }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") { showAIResultSheet = false }
-                    }
-                }
-            }
-        }
 
-        // ✅ Sheet 2: Ask AI (question box)
-        .sheet(isPresented: $showAIModeSheet) {
-            NavigationStack {
-                Form {
-                    Section("Mode") {
-                        Toggle("Use this note as context", isOn: $useNoteContextForAI)
-                    }
-
-                    Section("Question") {
-                        TextField("Type your question…", text: $aiQuestion, axis: .vertical)
-                            .lineLimit(3...8)
-                    }
-
-                    Section {
-                        Button {
-                            Task { await runAIQuestion() }
-                        } label: {
-                            Label("Ask", systemImage: "paperplane.fill")
-                        }
-                        .disabled(aiQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAIWorking)
-                    }
+                Menu("Translate") {
+                    Button("Arabic") { /* wire to translate later */ }
+                    Button("English") { /* wire to translate later */ }
+                    Button("French") { /* wire to translate later */ }
+                    Button("German") { /* wire to translate later */ }
+                    Button("Clear translation") { /* wire to translate later */ }
                 }
-                .navigationTitle("Ask AI")
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Cancel") { showAIModeSheet = false }
-                    }
+
+                Divider()
+
+                Button("Batch Print…", systemImage: "tray.full") {
+                    showBatchPrintSheet = true
                 }
+
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
         }
     }
 
-    // MARK: - Bottom controls bar
+    // MARK: - Bottom bar
+    private var bottomBar: some View {
+        HStack(spacing: 14) {
 
-    private var controlsBar: some View {
-        HStack(spacing: 10) {
-
-            // Save (only meaningful if editable)
-            Button("Save") {
-                var n = note
-                n.updatedAt = Date()
-                onSave(n)
+            Button {
+                saveNow(showToast: true)
+            } label: {
+                Label("Save", systemImage: "square.and.arrow.down")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(note.isFinalized)
+            .disabled(!canEdit)
 
-            // Dictation (disable if finalized OR transcribing)
+            Button(role: .destructive) {
+                showConfirmDelete = true
+            } label: {
+                Image(systemName: "trash")
+                    .frame(width: 44, height: 40)
+            }
+            .buttonStyle(.bordered)
+
             Button {
-                dictation.toggleDictation { transcript in
-                    let t = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !t.isEmpty else { return }
-                    insertTranscript(t)
-                }
+                shareNow()
             } label: {
-                if isPhone {
-                    Image(systemName: dictation.state == .recording ? "stop.circle.fill" : "mic.circle.fill")
-                        .font(.title3)
-                } else {
-                    Label(
-                        dictation.state == .recording ? "Stop" : "Dictate",
-                        systemImage: dictation.state == .recording ? "stop.circle.fill" : "mic.circle.fill"
-                    )
-                }
+                Image(systemName: "square.and.arrow.up")
+                    .frame(width: 44, height: 40)
             }
             .buttonStyle(.bordered)
-            .disabled(note.isFinalized || dictation.state == .transcribing)
 
-            // AI Menu (works even if note is finalized)
-            Menu {
-                Button {
-                    showAIModeSheet = true
-                } label: {
-                    Label("Ask a Question", systemImage: "questionmark.bubble")
-                }
-
-                Button {
-                    Task { await aiAssistImprove() }
-                } label: {
-                    Label("Improve Note (preview)", systemImage: "sparkles")
-                }
+            Button {
+                printNow()
             } label: {
-                if isPhone {
-                    Image(systemName: "sparkles").font(.title3)
-                } else {
-                    Label("AI", systemImage: "sparkles")
-                }
+                Image(systemName: "printer")
+                    .frame(width: 44, height: 40)
             }
             .buttonStyle(.bordered)
-            .disabled(isAIWorking)
-
-            // Translate menu (works even if note is finalized)
-            Menu {
-                Picker("Language", selection: $targetLanguage) {
-                    ForEach(languages, id: \.self) { Text($0).tag($0) }
-                }
-
-                Button {
-                    Task { await runTranslate() }
-                } label: {
-                    Label("Translate Now", systemImage: "globe")
-                }
-            } label: {
-                if isPhone {
-                    Image(systemName: "globe").font(.title3)
-                } else {
-                    Label("Translate", systemImage: "globe")
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(isAIWorking)
-
-            if isAIWorking || dictation.state == .transcribing {
-                ProgressView().scaleEffect(0.9)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.bottom, 6)
-        .background(.ultraThinMaterial)
-    }
-
-    // MARK: - Helper line
-
-    private func headerLine(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("\(label):").bold()
-            Text(value).lineLimit(1)
-            Spacer(minLength: 0)
         }
     }
 
-    // MARK: - Insert dictation at cursor (only if editable)
-
-    private func insertTranscript(_ t: String) {
-        guard !note.isFinalized else { return }
-
-        let ns = note.body as NSString
-        let safeLoc = max(0, min(selectedRange.location, ns.length))
-        let safeLen = max(0, min(selectedRange.length, ns.length - safeLoc))
-        let safeRange = NSRange(location: safeLoc, length: safeLen)
-
-        var leading = ""
-        if safeLoc > 0 {
-            let prevChar = ns.substring(with: NSRange(location: safeLoc - 1, length: 1))
-            if prevChar != "\n" && prevChar != " " && prevChar != "\t" {
-                leading = " "
-            }
-        }
-
-        let insert = leading + t
-        note.body = ns.replacingCharacters(in: safeRange, with: insert)
-        selectedRange = NSRange(location: safeLoc + (insert as NSString).length, length: 0)
-    }
-
-    // MARK: - AI / Translation Actions
-
-    @MainActor
-    private func runAIQuestion() async {
-        let q = aiQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return }
-
-        isAIWorking = true
-        defer { isAIWorking = false }
-
-        let context = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
-        let input: String
-
-        if useNoteContextForAI, !context.isEmpty {
-            input = """
-NOTE:
-\(context)
-
-QUESTION:
-\(q)
-"""
+    // MARK: - Load
+    private func loadNoteIfNeeded() {
+        if let n = store.note(by: noteID) {
+            note = n
+            editorText = n.body
+            isDirty = false
         } else {
-            input = q
-        }
-
-        do {
-            let result = try await OpenAIService.shared.generate(
-                instructions: """
-You are a neurosurgery assistant.
-Answer clearly and clinically.
-If the question is about management, provide structured options and cautions.
-If details are missing, ask clarifying questions.
-""",
-                input: input
-            )
-            aiResultText = result
-            showAIModeSheet = false
-            showAIResultSheet = true
-        } catch {
-            dictation.lastError = error.localizedDescription
+            note = nil
+            editorText = ""
         }
     }
 
-    @MainActor
-    private func aiAssistImprove() async {
-        let text = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+    // MARK: - Dirty + autosave
+    private func markDirtyAndAutosave() {
+        isDirty = true
 
-        isAIWorking = true
-        defer { isAIWorking = false }
+        autosaveWorkItem?.cancel()
+        let work = DispatchWorkItem { saveSilentlyIfDirty() }
+        autosaveWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+    }
 
-        do {
-            let improved = try await OpenAIService.shared.generate(
-                instructions: """
-You are a neurosurgery assistant.
-Improve clarity, structure, and professionalism.
-Preserve all medical facts.
-Do NOT remove headings.
-Return only the improved note text.
-""",
-                input: text
-            )
+    private func saveSilentlyIfDirty() {
+        guard isDirty else { return }
+        saveNow(showToast: false)
+    }
 
-            aiResultText = improved
-            showAIResultSheet = true
-        } catch {
-            dictation.lastError = error.localizedDescription
+    // MARK: - Save
+    private func saveNow(showToast: Bool) {
+        guard var n = note else { return }
+        guard canEdit else { return }
+
+        n.body = editorText
+        n.updatedAt = Date()
+        store.updateNote(n)
+
+        note = n
+        isDirty = false
+
+        if showToast {
+            showSavedToast = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                showSavedToast = false
+            }
         }
     }
 
-    @MainActor
-    private func runTranslate() async {
-        let text = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+    // MARK: - Delete
+    private func deleteNow() {
+        store.deleteNote(id: noteID)
+        dismiss()
+    }
 
-        isAIWorking = true
-        defer { isAIWorking = false }
+    // MARK: - Share / Print
+    private func shareNow() {
+        // Ensure latest text is saved silently before sharing
+        saveSilentlyIfDirty()
 
-        do {
-            let translated = try await OpenAIService.shared.generate(
-                instructions: """
-Translate the following medical note into \(targetLanguage).
-Preserve headings and medical meaning.
-Use professional medical language.
-""",
-                input: text
-            )
+        let text = editorText
+        shareItems = ["Medical Record", text]
+        showShareSheet = true
+    }
 
-            aiResultText = translated
-            showAIResultSheet = true
-        } catch {
-            dictation.lastError = error.localizedDescription
+    private func printNow() {
+        saveSilentlyIfDirty()
+        // If you have PrintShareHelper.swift in your project, keep this call.
+        PrintShareHelper.printText(editorText, jobName: "Medical Record")
+    }
+}
+
+// MARK: - Share Sheet (UIKit)
+
+private struct NoteShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
+}
+
+// MARK: - Batch Print (simple + stable)
+
+private struct BatchPrintView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: EMRStore
+
+    let patient: Patient
+
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var searchText: String = ""
+
+    private var filtered: [RecordNote] {
+        let base = store.notes(for: patient.id)
+        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return base }
+        let q = searchText.lowercased()
+        return base.filter { n in
+            n.type.rawValue.lowercased().contains(q) || n.body.lowercased().contains(q)
         }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack {
+                TextField("Search notes…", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .padding()
+
+                List(filtered, selection: $selectedIDs) { n in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(n.type.rawValue).font(.headline)
+                        Text(n.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .environment(\.editMode, .constant(.active))
+            }
+            .navigationTitle("Batch Print")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Select All") { selectedIDs = Set(filtered.map { $0.id }) }
+                }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    Button(role: .destructive) { selectedIDs.removeAll() } label: { Text("Clear") }
+                    Spacer()
+                    Button {
+                        let picked = filtered.filter { selectedIDs.contains($0.id) }
+                        let text = composedBatchText(picked)
+                        PrintShareHelper.printText(text, jobName: "Batch Medical Record")
+                        dismiss()
+                    } label: {
+                        Label("Print (\(selectedIDs.count))", systemImage: "printer.fill")
+                    }
+                    .disabled(selectedIDs.isEmpty)
+                }
+            }
+        }
+    }
+
+    private func composedBatchText(_ notes: [RecordNote]) -> String {
+        var lines: [String] = []
+        lines.append(patient.nameEnglish.isEmpty ? "Patient" : patient.nameEnglish)
+        lines.append(String(repeating: "=", count: 36))
+        lines.append("")
+
+        for n in notes.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            lines.append(n.type.rawValue)
+            lines.append(n.updatedAt.formatted(date: .abbreviated, time: .shortened))
+            lines.append(String(repeating: "-", count: 36))
+            lines.append(n.body)
+            lines.append("")
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
     }
 }

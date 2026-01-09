@@ -1,184 +1,206 @@
 import Foundation
-import Combine
+import SwiftUI
+
+// MARK: - Note Type
+
+public enum RecordNoteType: String, Codable, CaseIterable, Identifiable {
+    case soap = "SOAP / Progress Note"
+    case hp = "H&P"
+    case operative = "Operative Note"
+    case discharge = "Discharge Summary"
+    case eeg = "EEG Report"
+
+    public var id: String { rawValue }
+
+    public var shortLabel: String {
+        switch self {
+        case .soap: return "SOAP"
+        case .hp: return "H&P"
+        case .operative: return "Op"
+        case .discharge: return "Disch"
+        case .eeg: return "EEG"
+        }
+    }
+}
+
+// MARK: - Record Note
+
+public struct RecordNote: Identifiable, Codable, Hashable {
+    public var id: UUID = UUID()
+    public var patientID: UUID
+
+    public var type: RecordNoteType
+    public var body: String
+
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+
+    public var isFinalized: Bool = false
+
+    public init(patientID: UUID, type: RecordNoteType, body: String) {
+        self.patientID = patientID
+        self.type = type
+        self.body = body
+    }
+}
+
+// MARK: - Store
 
 @MainActor
-final class EMRStore: ObservableObject {
+public final class EMRStore: ObservableObject {
 
-    // MARK: - Published State
+    // Notes
+    @Published public var notes: [RecordNote] = []
+    @Published public var selectedNoteID: UUID? = nil
 
-    @Published var patients: [Patient] = []
-    @Published var notes: [RecordNote] = []
-    @Published var attachments: [Attachment] = []
-
-    @Published var selectedPatientID: UUID? = nil
-    @Published var selectedNoteID: UUID? = nil
-
-    @Published var lastModified: Date = Date()
-    @Published var lastErrorMessage: String? = nil
-
-    // MARK: - Auto-backup integration (wired from ContentView)
-
-    /// Set this once in ContentView:
-    /// store.backupCenter = backupCenter
-    var backupCenter: BackupCenter? = nil
+    // Optional header strings (safe, avoids depending on PhysiciansStore APIs)
+    @Published public var clinicName: String = "Clinic"
+    @Published public var treatingPhysicianName: String = "Treating Physician"
 
     // MARK: - Init
 
-    init() {
-        loadAll()
+    public init() { }
 
-        // Default selection (first non-deleted patient)
-        if selectedPatientID == nil {
-            selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
+    // MARK: - Notes CRUD
+
+    public func notes(for patientID: UUID) -> [RecordNote] {
+        notes
+            .filter { $0.patientID == patientID }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    public func note(by id: UUID) -> RecordNote? {
+        notes.first(where: { $0.id == id })
+    }
+
+    public func addNote(for patientID: UUID, type: RecordNoteType) -> UUID {
+        let new = RecordNote(patientID: patientID, type: type, body: templateText(for: type))
+        notes.insert(new, at: 0)
+        selectedNoteID = new.id
+        return new.id
+    }
+
+    public func updateNote(_ note: RecordNote) {
+        guard let idx = notes.firstIndex(where: { $0.id == note.id }) else { return }
+        notes[idx] = note
+    }
+
+    public func deleteNote(id: UUID) {
+        notes.removeAll(where: { $0.id == id })
+        if selectedNoteID == id {
+            selectedNoteID = nil
         }
     }
 
-    // MARK: - Public API (Patients)
+    // MARK: - Templates (single source of truth)
 
-    @discardableResult
-    func addNewPatient() -> Patient {
-        var p = Patient()
-        p.isDeleted = false
-        patients.insert(p, at: 0)
-        selectedPatientID = p.id
-        savePatients()
-        return p
-    }
+    public func templateText(for type: RecordNoteType) -> String {
+        switch type {
 
-    func savePatient(_ patient: Patient) {
-        if let idx = patients.firstIndex(where: { $0.id == patient.id }) {
-            patients[idx] = patient
-        } else {
-            patients.insert(patient, at: 0)
-        }
-        lastModified = Date()
-        savePatients()
-    }
+        case .soap:
+            return """
+            SUBJECTIVE:
+            OBJECTIVE:
+            PHYSICAL EXAMINATION:
 
-    func softDeletePatient(_ id: UUID) {
-        guard let idx = patients.firstIndex(where: { $0.id == id }) else { return }
-        patients[idx].isDeleted = true
+            VITALS:
+            BP: ____ / ____ mmHg
+            HR: ____ bpm
+            Temp: ____ °C
+            O₂ Sat: ____ %
 
-        if selectedPatientID == id {
-            selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
-        }
+            GENERAL:
+            NEUROLOGIC:
+            OTHER SYSTEMS:
+            Exam:
+            Labs / Imaging:
 
-        lastModified = Date()
-        savePatients()
-    }
+            ASSESSMENT:
+            1)
+            2)
 
-    func replaceAllPatients(with newPatients: [Patient]) {
-        patients = newPatients
-        selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
-        lastModified = Date()
-        savePatients()
-    }
+            PLAN:
+            -
+            """
 
-    // MARK: - Public API (Notes)
+        case .hp:
+            return """
+            CHIEF COMPLAINT:
+            HISTORY OF PRESENT ILLNESS:
 
-    @discardableResult
-    func addNote(_ note: RecordNote) -> RecordNote {
-        notes.insert(note, at: 0)
-        selectedNoteID = note.id
-        lastModified = Date()
-        saveNotes()
-        return note
-    }
+            PAST MEDICAL HISTORY:
+            PAST SURGICAL HISTORY:
+            MEDICATIONS:
+            ALLERGIES:
+            SOCIAL HISTORY:
+            FAMILY HISTORY:
 
-    func saveNote(_ note: RecordNote) {
-        if let idx = notes.firstIndex(where: { $0.id == note.id }) {
-            notes[idx] = note
-        } else {
-            notes.insert(note, at: 0)
-        }
-        lastModified = Date()
-        saveNotes()
-    }
+            REVIEW OF SYSTEMS:
 
-    func deleteNote(_ id: UUID) {
-        notes.removeAll { $0.id == id }
-        if selectedNoteID == id { selectedNoteID = notes.first?.id }
-        lastModified = Date()
-        saveNotes()
-    }
+            PHYSICAL EXAMINATION:
+            VITALS:
+            GENERAL:
+            NEUROLOGIC:
+            OTHER SYSTEMS:
 
-    // MARK: - Public API (Attachments)
+            LABS / IMAGING:
 
-    func setAttachments(_ newAttachments: [Attachment]) {
-        attachments = newAttachments
-        lastModified = Date()
-        saveAttachments()
-    }
+            ASSESSMENT:
+            -
 
-    // MARK: - Persistence
+            PLAN:
+            -
+            """
 
-    func forcePersistAll() {
-        savePatients()
-        saveNotes()
-        saveAttachments()
-    }
+        case .operative:
+            return """
+            PREOPERATIVE DIAGNOSIS:
+            POSTOPERATIVE DIAGNOSIS:
+            PROCEDURE:
+            SURGEON:
+            ASSISTANT:
+            ANESTHESIA:
+            ESTIMATED BLOOD LOSS:
+            SPECIMENS:
+            DRAINS:
+            COMPLICATIONS:
 
-    private func loadAll() {
-        patients = load([Patient].self, from: patientsURL) ?? []
-        notes = load([RecordNote].self, from: notesURL) ?? []
-        attachments = load([Attachment].self, from: attachmentsURL) ?? []
-    }
+            INDICATIONS:
 
-    private func savePatients() {
-        save(patients, to: patientsURL)
-        maybeAutoBackup()
-    }
+            DESCRIPTION OF PROCEDURE:
 
-    private func saveNotes() {
-        save(notes, to: notesURL)
-        maybeAutoBackup()
-    }
+            DISPOSITION:
+            """
 
-    private func saveAttachments() {
-        save(attachments, to: attachmentsURL)
-        maybeAutoBackup()
-    }
+        case .discharge:
+            return """
+            ADMISSION DATE:
+            DISCHARGE DATE:
+            ADMITTING DIAGNOSIS:
+            DISCHARGE DIAGNOSIS:
 
-    // MARK: - Auto Backup Hook
+            HOSPITAL COURSE:
 
-    private func maybeAutoBackup() {
-        guard let backupCenter else { return }
+            DISCHARGE MEDICATIONS:
 
-        let pw = UserDefaults.standard.string(forKey: "EMR_AUTOBACKUP_PASSWORD") ?? ""
-        guard !pw.isEmpty else { return }
+            FOLLOW UP:
 
-        backupCenter.autoBackupIfNeeded(store: self, password: pw)
-    }
+            DISCHARGE INSTRUCTIONS:
+            """
 
-    // MARK: - File URLs
+        case .eeg:
+            return """
+            DATE:
+            INDICATION:
+            MEDICATIONS:
 
-    private var documentsURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-    }
+            TECHNIQUE:
+            BACKGROUND:
+            ACTIVATION PROCEDURES:
+            ABNORMALITIES:
 
-    private var patientsURL: URL { documentsURL.appendingPathComponent("patients.json") }
-    private var notesURL: URL { documentsURL.appendingPathComponent("notes.json") }
-    private var attachmentsURL: URL { documentsURL.appendingPathComponent("attachments.json") }
-
-    // MARK: - JSON helpers
-
-    private func load<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
-        do {
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-            let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            print("Load failed \(url.lastPathComponent): \(error)")
-            return nil
-        }
-    }
-
-    private func save<T: Encodable>(_ value: T, to url: URL) {
-        do {
-            let data = try JSONEncoder().encode(value)
-            try data.write(to: url, options: [.atomic])
-        } catch {
-            print("Save failed \(url.lastPathComponent): \(error)")
+            IMPRESSION:
+            """
         }
     }
 }

@@ -128,12 +128,15 @@ struct AIWorkspacePane: View {
     private func saveAsNote() {
         guard let pid = selectedPatientID else { return }
 
-        let caution = "⚠️ This content was generated/translated by AI. Errors may occur. Please verify.\n\n"
+        let caption = "⚠️ This content was generated/translated by AI. Errors may occur. Please verify.\n\n"
 
         var note = RecordNote(patientID: pid, type: .blank)
-        note.body = caution + output
+        note.title = "AI Output"
+        note.body = caption + output
         note.updatedAt = Date()
 
-        store.saveNote(note)
+        store.notes.insert(note, at: 0)
+        store.selectedNoteID = note.id
+        store.lastModified = Date()
     }
 }

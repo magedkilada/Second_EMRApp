@@ -9,6 +9,8 @@ public enum Gender: String, Codable, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+public var treatingPhysicianName: String = ""
+
 public struct Patient: Identifiable, Codable, Hashable {
     public var id: UUID = UUID()
 
@@ -32,6 +34,7 @@ public struct Patient: Identifiable, Codable, Hashable {
 
     public init() {}
 }
+
 
 // MARK: - Record Types
 
@@ -77,7 +80,6 @@ FAMILY HISTORY:
 REVIEW OF SYSTEMS:  
 
 PHYSICAL EXAMINATION:  
-PHYSICAL EXAMINATION:  
 
 VITALS:
 BP: ____ / ____ mmHg
@@ -99,23 +101,22 @@ PLAN:
             return """
 SUBJECTIVE:  
 OBJECTIVE:  
-PHYSICAL EXAMINATION:  
+    PHYSICAL EXAMINATION:  
 
-VITALS:
-BP: ____ / ____ mmHg
-HR: ____ bpm
-Temp: ____ °C
-O₂ Sat: ____ %
+    VITALS:
+    BP: ____ / ____ mmHg
+    HR: ____ bpm
+    Temp: ____ °C
+    O₂ Sat: ____ %
 
-GENERAL:  
-NEUROLOGIC:  
-OTHER SYSTEMS:   
-Exam:  
+    GENERAL:  
+    NEUROLOGIC:  
+    OTHER SYSTEMS:   
+ 
 Labs / Imaging:  
 
 ASSESSMENT:  
-1)  
-2)  
+
 
 PLAN:  
 -  
@@ -250,6 +251,7 @@ public struct RecordNote: Identifiable, Codable, Hashable {
         }
     }
 }
+
 // MARK: - Attachments
 
 public struct Attachment: Identifiable, Codable, Hashable {

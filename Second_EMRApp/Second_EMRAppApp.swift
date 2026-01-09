@@ -8,8 +8,8 @@ struct Second_EMRAppApp: App {
 
     init() {
         print("🚀 APP LAUNCHED")
-        print("API KEY:",
-              Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") ?? "NIL")
+        let hasKey = (Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String)?.isEmpty == false
+        print("OPENAI_API_KEY present:", hasKey)
     }
 
     var body: some Scene {

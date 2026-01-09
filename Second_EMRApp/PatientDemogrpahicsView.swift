@@ -47,11 +47,27 @@ struct PatientDemographicsView: View {
             }
 
             Section("Identifiers") {
-                TextField("Medical Record Number (digits only)", text: $patient.mrn)
-                    .keyboardType(.numberPad)
-                    .onChange(of: patient.mrn) { _, newValue in
-                        patient.mrn = digitsOnly(newValue)
+                HStack(spacing: 8) {
+                    TextField("MRN", text: $patient.mrn)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .keyboardType(.asciiCapable)
+                        .onChange(of: patient.mrn) { _, newValue in
+                            let filtered = newValue
+                                .uppercased()
+                                .filter { ("A"..."Z").contains($0) || ("0"..."9").contains($0) }
+                            if filtered != newValue { patient.mrn = filtered }
+                        }
+
+                    Button {
+                        UIPasteboard.general.string = patient.mrn
+                    } label: {
+                        Image(systemName: "doc.on.doc")
                     }
+                    .buttonStyle(.borderless)
+                    .disabled(patient.mrn.isEmpty)
+                    .help("Copy MRN")
+                }
 
                 TextField("National ID (digits only)", text: $patient.nationalID)
                     .keyboardType(.numberPad)
