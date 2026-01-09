@@ -10,6 +10,8 @@ struct NoteEditorView: View {
     // MARK: - Environment
     @EnvironmentObject private var store: EMRStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var hSize
+    private var isPhone: Bool { hSize == .compact }
 
     // MARK: - Local state
     @State private var note: RecordNote? = nil
@@ -21,6 +23,9 @@ struct NoteEditorView: View {
 
     // Confirmations
     @State private var showConfirmDelete: Bool = false
+    @State private var showConfirmFinalize: Bool = false
+
+    // Template replacement confirm
     @State private var showReplaceTemplateConfirm: Bool = false
     @State private var pendingTemplateText: String = ""
 
@@ -45,13 +50,8 @@ struct NoteEditorView: View {
         return "Patient"
     }
 
-    private var headerPhysicianLine: String {
-        store.treatingPhysicianName
-    }
-
-    private var headerClinic: String {
-        store.clinicName
-    }
+    private var headerPhysicianLine: String { store.treatingPhysicianName }
+    private var headerClinic: String { store.clinicName }
 
     // MARK: - Body
     var body: some View {
@@ -59,8 +59,21 @@ struct NoteEditorView: View {
 
             // Header
             VStack(alignment: .leading, spacing: 4) {
-                Text(patientDisplayName)
-                    .font(.largeTitle).bold()
+                HStack(alignment: .firstTextBaseline) {
+                    Text(patientDisplayName)
+                        .font(.largeTitle).bold()
+
+                    Spacer()
+
+                    if note?.isFinalized == true {
+                        Text("FINALIZED")
+                            .font(.caption).bold()
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.thinMaterial)
+                            .clipShape(Capsule())
+                    }
+                }
 
                 Text(headerPhysicianLine)
                     .font(.subheadline)
@@ -79,7 +92,10 @@ struct NoteEditorView: View {
             TextEditor(text: $editorText)
                 .font(.body)
                 .padding(12)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground)))
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(.secondarySystemBackground))
+                )
                 .padding(.horizontal)
                 .disabled(!canEdit)
                 .onChange(of: editorText) { _, _ in
@@ -117,12 +133,22 @@ struct NoteEditorView: View {
             Text("This will permanently remove this note from this device.")
         }
 
+        // Finalize confirm (irreversible)
+        .alert("Finalize this note?", isPresented: $showConfirmFinalize) {
+            Button("Cancel", role: .cancel) { }
+            Button("Finalize", role: .destructive) { finalizeNow() }
+        } message: {
+            Text("Finalized notes cannot be edited.")
+        }
+
         // Template replace confirm
         .alert("Replace current note with template?", isPresented: $showReplaceTemplateConfirm) {
             Button("Cancel", role: .cancel) { }
             Button("Replace", role: .destructive) {
+                // ✅ user request: auto-save current before replacing (unless deleted)
+                saveSilentlyIfDirty()
                 editorText = pendingTemplateText
-                markDirtyAndAutosave()
+                markDirtyAndAutosave()      // will save new text shortly
             }
         } message: {
             Text("This will overwrite the current note text.")
@@ -144,52 +170,32 @@ struct NoteEditorView: View {
         .animation(.easeInOut(duration: 0.2), value: showSavedToast)
     }
 
-    // MARK: - Top toolbar (AI / Translate placeholders + Template)
+    // MARK: - Top toolbar (✅ remove Template, keep AI/Translate only)
     @ToolbarContentBuilder
     private var topRightToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
-
             Menu {
-                // Template menu
-                Menu("Template") {
-                    ForEach(RecordNoteType.allCases) { t in
-                        Button(t.rawValue) {
-                            pendingTemplateText = store.templateText(for: t)
-                            showReplaceTemplateConfirm = true
-                        }
-                    }
-                }
-
-                // Placeholders for AI / Translate (wire later)
-                // These buttons are intentionally safe stubs (no compile dependencies).
                 Menu("AI") {
-                    Button("Improve note (replace)") { /* wire to AI later */ }
-                    Button("Improve note (copy)") { /* wire to AI later */ }
-                    Button("Ask about note") { /* wire to AI later */ }
-                    Button("Clear AI") { /* wire to AI later */ }
+                    Button("Improve note (replace)") { /* wire later */ }
+                    Button("Improve note (copy)") { /* wire later */ }
+                    Button("Ask about note") { /* wire later */ }
+                    Button("Clear AI") { /* wire later */ }
                 }
 
                 Menu("Translate") {
-                    Button("Arabic") { /* wire to translate later */ }
-                    Button("English") { /* wire to translate later */ }
-                    Button("French") { /* wire to translate later */ }
-                    Button("German") { /* wire to translate later */ }
-                    Button("Clear translation") { /* wire to translate later */ }
+                    Button("Arabic") { /* wire later */ }
+                    Button("English") { /* wire later */ }
+                    Button("French") { /* wire later */ }
+                    Button("German") { /* wire later */ }
+                    Button("Clear translation") { /* wire later */ }
                 }
-
-                Divider()
-
-                Button("Batch Print…", systemImage: "tray.full") {
-                    showBatchPrintSheet = true
-                }
-
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
         }
     }
 
-    // MARK: - Bottom bar
+    // MARK: - Bottom bar (✅ add Finalize + move Batch Print to printer menu)
     private var bottomBar: some View {
         HStack(spacing: 14) {
 
@@ -200,6 +206,16 @@ struct NoteEditorView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(!canEdit)
+
+            // ✅ Finalize button (bottom bar)
+            Button {
+                showConfirmFinalize = true
+            } label: {
+                Label("Finalize", systemImage: "checkmark.seal")
+                    .frame(minWidth: 120)
+            }
+            .buttonStyle(.bordered)
             .disabled(!canEdit)
 
             Button(role: .destructive) {
@@ -218,14 +234,26 @@ struct NoteEditorView: View {
             }
             .buttonStyle(.bordered)
 
-            Button {
-                printNow()
+            // ✅ Printer is now a menu: Print this + Batch Print
+            Menu {
+                Button("Print This Note", systemImage: "printer") {
+                    printNow()
+                }
+                Button("Batch Print…", systemImage: "tray.full") {
+                    showBatchPrintSheet = true
+                }
             } label: {
                 Image(systemName: "printer")
                     .frame(width: 44, height: 40)
             }
             .buttonStyle(.bordered)
         }
+    }
+
+    // MARK: - Public API called by the LEFT templates list (use this from RecordsWorkspaceView)
+    func requestReplaceWithTemplate(_ type: RecordNoteType) {
+        pendingTemplateText = store.templateText(for: type)
+        showReplaceTemplateConfirm = true
     }
 
     // MARK: - Load
@@ -243,7 +271,6 @@ struct NoteEditorView: View {
     // MARK: - Dirty + autosave
     private func markDirtyAndAutosave() {
         isDirty = true
-
         autosaveWorkItem?.cancel()
         let work = DispatchWorkItem { saveSilentlyIfDirty() }
         autosaveWorkItem = work
@@ -262,6 +289,7 @@ struct NoteEditorView: View {
 
         n.body = editorText
         n.updatedAt = Date()
+
         store.updateNote(n)
 
         note = n
@@ -272,118 +300,54 @@ struct NoteEditorView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 showSavedToast = false
             }
+
+            // ✅ iPad workflow: clear editor after save
+            if !isPhone {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    store.selectedNoteID = nil
+                }
+            }
         }
+    }
+
+    // MARK: - Finalize
+    private func finalizeNow() {
+        saveSilentlyIfDirty()
+        guard var n = note else { return }
+        n.isFinalized = true
+        n.updatedAt = Date()
+        store.updateNote(n)
+        note = n
     }
 
     // MARK: - Delete
     private func deleteNow() {
         store.deleteNote(id: noteID)
-        dismiss()
-    }
 
+        if isPhone {
+            dismiss()
+        } else {
+            store.selectedNoteID = nil
+        }
+    }
     // MARK: - Share / Print
     private func shareNow() {
-        // Ensure latest text is saved silently before sharing
         saveSilentlyIfDirty()
-
-        let text = editorText
-        shareItems = ["Medical Record", text]
+        shareItems = ["Medical Record", editorText]
         showShareSheet = true
     }
 
     private func printNow() {
         saveSilentlyIfDirty()
-        // If you have PrintShareHelper.swift in your project, keep this call.
         PrintShareHelper.printText(editorText, jobName: "Medical Record")
     }
 }
 
 // MARK: - Share Sheet (UIKit)
-
 private struct NoteShareSheet: UIViewControllerRepresentable {
     let items: [Any]
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
-}
-
-// MARK: - Batch Print (simple + stable)
-
-private struct BatchPrintView: View {
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: EMRStore
-
-    let patient: Patient
-
-    @State private var selectedIDs: Set<UUID> = []
-    @State private var searchText: String = ""
-
-    private var filtered: [RecordNote] {
-        let base = store.notes(for: patient.id)
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return base }
-        let q = searchText.lowercased()
-        return base.filter { n in
-            n.type.rawValue.lowercased().contains(q) || n.body.lowercased().contains(q)
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack {
-                TextField("Search notes…", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .padding()
-
-                List(filtered, selection: $selectedIDs) { n in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(n.type.rawValue).font(.headline)
-                        Text(n.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .environment(\.editMode, .constant(.active))
-            }
-            .navigationTitle("Batch Print")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Select All") { selectedIDs = Set(filtered.map { $0.id }) }
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button(role: .destructive) { selectedIDs.removeAll() } label: { Text("Clear") }
-                    Spacer()
-                    Button {
-                        let picked = filtered.filter { selectedIDs.contains($0.id) }
-                        let text = composedBatchText(picked)
-                        PrintShareHelper.printText(text, jobName: "Batch Medical Record")
-                        dismiss()
-                    } label: {
-                        Label("Print (\(selectedIDs.count))", systemImage: "printer.fill")
-                    }
-                    .disabled(selectedIDs.isEmpty)
-                }
-            }
-        }
-    }
-
-    private func composedBatchText(_ notes: [RecordNote]) -> String {
-        var lines: [String] = []
-        lines.append(patient.nameEnglish.isEmpty ? "Patient" : patient.nameEnglish)
-        lines.append(String(repeating: "=", count: 36))
-        lines.append("")
-
-        for n in notes.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            lines.append(n.type.rawValue)
-            lines.append(n.updatedAt.formatted(date: .abbreviated, time: .shortened))
-            lines.append(String(repeating: "-", count: 36))
-            lines.append(n.body)
-            lines.append("")
-            lines.append("")
-        }
-        return lines.joined(separator: "\n")
-    }
 }

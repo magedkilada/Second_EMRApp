@@ -1,81 +1,168 @@
 import Foundation
+import SwiftUI
 import Combine
 
-// MARK: - Model
+// MARK: - Reference Item Model
 
-struct ReferenceItem: Identifiable, Codable, Hashable {
-    var id: UUID = UUID()
-    var title: String
-    var category: String
-    var body: String              // markdown or plain text
-    var isFavorite: Bool = false
-    var updatedAt: Date = Date()
+public struct ReferenceItem: Identifiable, Codable, Hashable {
+    public var id: UUID = UUID()
+    public var title: String
+    public var category: String
+    public var body: String
+    public var isFavorite: Bool = false
+    public var createdAt: Date = Date()
+    
+    public init(title: String = "", category: String = "", body: String = "") {
+        self.title = title
+        self.category = category
+        self.body = body
+    }
 }
 
-// MARK: - Store
+// MARK: - References Store
 
 @MainActor
-final class ReferencesStore: ObservableObject {
-
-    @Published var items: [ReferenceItem] = [
-        ReferenceItem(
-            title: "Glasgow Coma Scale (GCS)",
-            category: "Scales",
-            body: """
-GCS = Eye (E) + Verbal (V) + Motor (M)
-
-E: 4 spontaneous / 3 to speech / 2 to pain / 1 none
-V: 5 oriented / 4 confused / 3 inappropriate / 2 incomprehensible / 1 none
-M: 6 obeys / 5 localizes / 4 withdraws / 3 flexion / 2 extension / 1 none
-"""
-        ),
-        ReferenceItem(
-            title: "Hunt & Hess Grade",
-            category: "Scales",
-            body: """
-Grade 1–5 (brief description here)
-"""
-        ),
-        ReferenceItem(
-            title: "Fisher Grade",
-            category: "Scales",
-            body: """
-Grade 1–4 (brief description here)
-"""
-        ),
-        ReferenceItem(
-            title: "AO Spine Fracture Classification",
-            category: "Protocols",
-            body: """
-AO A0–A4, B, C (brief outline here)
-"""
-        )
-    ]
-
-    func item(with id: UUID?) -> ReferenceItem? {
-        guard let id else { return nil }
-        return items.first(where: { $0.id == id })
+public final class ReferencesStore: ObservableObject {
+    
+    @Published public var items: [ReferenceItem] = []
+    
+    private let storageKey = "references_v1"
+    
+    public init() {
+        load()
+        
+        // Add default references if empty
+        if items.isEmpty {
+            addDefaultReferences()
+        }
     }
-
-    func addBlank() -> ReferenceItem {
-        let new = ReferenceItem(title: "New Reference", category: "Unsorted", body: "")
-        items.insert(new, at: 0)
-        return new
+    
+    // MARK: - CRUD
+    
+    public func addBlank() -> ReferenceItem {
+        let item = ReferenceItem(title: "New Reference", category: "General", body: "")
+        items.insert(item, at: 0)
+        save()
+        return item
     }
-
-    func delete(_ item: ReferenceItem) {
-        items.removeAll { $0.id == item.id }
-    }
-
-    func toggleFavorite(_ item: ReferenceItem) {
-        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[idx].isFavorite.toggle()
-        items[idx].updatedAt = Date()
-    }
-
-    func update(_ item: ReferenceItem) {
+    
+    public func update(_ item: ReferenceItem) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[idx] = item
-        items[idx].updatedAt = Date()
+        save()
+    }
+    
+    public func delete(_ item: ReferenceItem) {
+        items.removeAll(where: { $0.id == item.id })
+        save()
+    }
+    
+    public func toggleFavorite(_ item: ReferenceItem) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[idx].isFavorite.toggle()
+        save()
+    }
+    
+    // MARK: - Storage
+    
+    public func save() {
+        do {
+            let data = try JSONEncoder().encode(items)
+            UserDefaults.standard.set(data, forKey: storageKey)
+        } catch {
+            print("❌ Failed to save references:", error)
+        }
+    }
+    
+    private func load() {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let decoded = try? JSONDecoder().decode([ReferenceItem].self, from: data) else {
+            items = []
+            return
+        }
+        items = decoded
+    }
+    
+    // MARK: - Default Content
+    
+    private func addDefaultReferences() {
+        let gcs = ReferenceItem(
+            title: "Glasgow Coma Scale (GCS)",
+            category: "Neurosurgery",
+            body: """
+GLASGOW COMA SCALE (GCS)
+
+Eye Opening (E):
+4 - Spontaneous
+3 - To speech
+2 - To pain
+1 - None
+
+Verbal Response (V):
+5 - Oriented
+4 - Confused
+3 - Inappropriate words
+2 - Incomprehensible sounds
+1 - None
+
+Motor Response (M):
+6 - Obeys commands
+5 - Localizes pain
+4 - Withdraws from pain
+3 - Flexion to pain (decorticate)
+2 - Extension to pain (decerebrate)
+1 - None
+
+Total Score: E + V + M (3-15)
+• 13-15: Mild injury
+• 9-12: Moderate injury
+• 3-8: Severe injury
+"""
+        )
+        
+        let huntHess = ReferenceItem(
+            title: "Hunt & Hess Grade (SAH)",
+            category: "Neurosurgery",
+            body: """
+HUNT & HESS GRADING (Subarachnoid Hemorrhage)
+
+Grade 1: Asymptomatic or mild headache, slight nuchal rigidity
+
+Grade 2: Moderate to severe headache, nuchal rigidity, cranial nerve palsy
+
+Grade 3: Drowsiness, confusion, mild focal deficit
+
+Grade 4: Stupor, moderate to severe hemiparesis, early decerebrate rigidity
+
+Grade 5: Deep coma, decerebrate rigidity, moribund appearance
+"""
+        )
+        
+        let fisher = ReferenceItem(
+            title: "Fisher Grade (SAH)",
+            category: "Neurosurgery",
+            body: """
+FISHER GRADE (CT appearance of SAH)
+
+Grade 1: No blood detected
+
+Grade 2: Diffuse thin SAH (<1mm)
+
+Grade 3: Localized clot and/or thick SAH (>1mm)
+
+Grade 4: Diffuse or no SAH with intraventricular or intraparenchymal blood
+
+Modified Fisher Scale:
+0 - No SAH or IVH
+1 - Thin SAH, no IVH
+2 - Thin SAH with IVH
+3 - Thick SAH, no IVH
+4 - Thick SAH with IVH
+"""
+        )
+        
+        items = [gcs, huntHess, fisher]
+        save()
     }
 }
+

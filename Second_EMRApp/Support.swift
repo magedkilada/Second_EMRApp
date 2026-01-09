@@ -89,3 +89,15 @@ struct NoteHeaderCard: View {
         }
     }
 }
+import Foundation
+
+extension Date {
+    /// Full years elapsed from this date until now
+    var ageYears: Int {
+        let cal = Calendar.current
+        let now = Date()
+        let comps = cal.dateComponents([.year], from: self, to: now)
+        return max(0, comps.year ?? 0)
+    }
+}
+

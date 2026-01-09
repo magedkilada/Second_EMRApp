@@ -19,6 +19,10 @@ struct ContentView: View {
     @State private var filterAgeBand: AgeBand? = nil
     @State private var filterHasNotes: Bool = false
     @State private var filterHasImaging: Bool = false
+    @State private var showFilters = false
+    @State private var globalSearchQuery: String = ""
+    
+    @Binding var query: String
 
     var body: some View {
         NavigationSplitView {
@@ -40,16 +44,16 @@ struct ContentView: View {
                 Text("Treating Physician")
             }
 
-            // Optional inline references card (you said you already have it)
+            // ✅ NEW: Encounter / Clinic card (binds to selected patient)
             Section {
-                ReferencesInlineCard(onOpen: { showReferenceCenter = true })
+                EncounterTypeCard(patient: selectedPatientBinding)
                     .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
             } header: {
-                Text("References")
+                Text("Encounter")
             }
 
-            // Filters (chips)
-            Section {
+            // Filters (collapsible)
+            Section(isExpanded: $showFilters) {
                 PatientFilterChips(
                     gender: $filterGender,
                     ageBand: $filterAgeBand,
@@ -65,15 +69,9 @@ struct ContentView: View {
 
                 ForEach(filteredPatientsForSidebar) { p in
                     VStack(alignment: .leading, spacing: 4) {
+                        highlightText(patientDisplayName(p), query: patientSearchText)
+                            .font(.headline)
 
-                        // Name line (highlight match)
-                        highlightText(
-                            patientDisplayName(p),
-                            query: patientSearchText
-                        )
-                        .font(.headline)
-
-                        // Secondary line (MRN / Phone / DOB) - also searchable
                         let secondary = patientSecondaryLine(p)
                         if !secondary.isEmpty {
                             highlightText(secondary, query: patientSearchText)
@@ -84,9 +82,7 @@ struct ContentView: View {
                     .tag(p.id as UUID?)
                 }
 
-                Button {
-                    addPatient()
-                } label: {
+                Button { addPatient() } label: {
                     Label("Add Patient", systemImage: "person.badge.plus")
                 }
             }
@@ -121,10 +117,10 @@ struct ContentView: View {
                 .environmentObject(physicians)
         }
         .sheet(isPresented: $showReferenceCenter) {
-            ReferenceCenterView()
+            ReferencesCenterView()
         }
         .sheet(isPresented: $showGlobalSearch) {
-            GlobalRecordSearchView()
+            GlobalRecordsSearchView(query: $globalSearchQuery)
                 .environmentObject(store)
         }
         .alert("Delete patient?", isPresented: Binding(
@@ -151,7 +147,7 @@ struct ContentView: View {
                 PatientDetailHost(
                     patient: $store.patients[idx],
                     patientValueForRecords: store.patients[idx],
-                    onSavePatient: { savePatientEdits(id: id) },
+                    onSavePatient: { savePatientEditsAndStartNew(id: id) },
                     onRequestDelete: { confirmDeletePatientID = id }
                 )
 
@@ -162,15 +158,23 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Selected patient binding for Encounter card
+
+    private var selectedPatientBinding: Binding<Patient>? {
+        guard let id = store.selectedPatientID,
+              let idx = store.patients.firstIndex(where: { $0.id == id }) else {
+            return nil
+        }
+        return $store.patients[idx]
+    }
+
     // MARK: - Patient Filtering + Ranking
 
     private var filteredPatientsForSidebar: [Patient] {
         let q = patientSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-        // Base set: not deleted
         var candidates = store.patients.filter { !$0.isDeleted }
 
-        // Apply filter chips
         candidates = candidates.filter { p in
             if let g = filterGender, p.gender != g { return false }
             if let band = filterAgeBand {
@@ -182,23 +186,18 @@ struct ContentView: View {
                 if !has { return false }
             }
             if filterHasImaging {
-                // “Has Imaging” == has any Radiology attachment
                 let has = store.attachments.contains(where: { $0.patientID == p.id && $0.category == .radiology })
                 if !has { return false }
             }
             return true
         }
 
-        // No search text => just sort by name
         guard !q.isEmpty else {
             return candidates.sorted { patientDisplayName($0) < patientDisplayName($1) }
         }
 
-        // Ranked search
         return candidates
-            .map { p -> (Patient, Int) in
-                (p, patientMatchScore(p, query: q))
-            }
+            .map { p -> (Patient, Int) in (p, patientMatchScore(p, query: q)) }
             .filter { $0.1 > 0 }
             .sorted { a, b in
                 if a.1 != b.1 { return a.1 > b.1 }
@@ -208,11 +207,6 @@ struct ContentView: View {
     }
 
     private func patientMatchScore(_ p: Patient, query q: String) -> Int {
-        // Higher = better
-        // 1) Name hits first
-        // 2) MRN next
-        // 3) DOB next
-        // 4) then phone / IDs / email
         let en = p.nameEnglish.lowercased()
         let ar = p.nameArabic.lowercased()
         let mrn = p.mrn.lowercased()
@@ -226,20 +220,15 @@ struct ContentView: View {
         let dob3 = String(p.dob.ISO8601Format().prefix(10)).lowercased()
 
         var score = 0
-
         if en.contains(q) || ar.contains(q) { score += 100 }
         if mrn.contains(q) { score += 80 }
         if dob1.contains(q) || dob2.contains(q) || dob3.contains(q) { score += 60 }
-
         if phone.contains(q) { score += 40 }
         if nat.contains(q) { score += 30 }
         if pass.contains(q) { score += 25 }
         if email.contains(q) { score += 15 }
-
-        // Bonus for prefix match (feels “smarter”)
         if en.hasPrefix(q) || ar.hasPrefix(q) { score += 20 }
         if mrn.hasPrefix(q) { score += 15 }
-
         return score
     }
 
@@ -265,19 +254,19 @@ struct ContentView: View {
         let phone = p.phone.trimmingCharacters(in: .whitespacesAndNewlines)
         if !phone.isEmpty { parts.append("Phone: \(phone)") }
 
+        // ✅ small hint for clinic patients (optional but useful)
+        if p.encounterType == .clinic, let appt = p.appointmentDate {
+            let t = appt.formatted(date: .omitted, time: .shortened)
+            parts.append("Clinic: \(t)")
+        }
+
         return parts.joined(separator: "  •  ")
     }
 
-    // Simple highlight: if query exists in full string, make the whole text slightly emphasized.
-    // (Safer than substring attribute slicing which can crash on index math in SwiftUI.)
     private func highlightText(_ text: String, query: String) -> Text {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return Text(text) }
-        if text.lowercased().contains(q) {
-            return Text(text).bold()
-        } else {
-            return Text(text)
-        }
+        return text.lowercased().contains(q) ? Text(text).bold() : Text(text)
     }
 
     // MARK: - Actions
@@ -286,6 +275,8 @@ struct ContentView: View {
         var p = Patient()
         p.createdAt = Date()
         p.updatedAt = Date()
+        p.encounterType = .inpatient
+        p.appointmentDate = nil
         store.patients.append(p)
         store.savePatients()
         store.selectedPatientID = p.id
@@ -295,15 +286,18 @@ struct ContentView: View {
         guard let idx = store.patients.firstIndex(where: { $0.id == id }) else { return }
         store.patients[idx].isDeleted = true
         store.savePatients()
-
-        // select another available patient
         store.selectedPatientID = store.patients.first(where: { !$0.isDeleted })?.id
     }
 
-    private func savePatientEdits(id: UUID) {
+    /// ✅ New behavior you requested:
+    /// Save demographics -> patient is committed -> immediately start a NEW blank patient
+    private func savePatientEditsAndStartNew(id: UUID) {
         guard let idx = store.patients.firstIndex(where: { $0.id == id }) else { return }
         store.patients[idx].updatedAt = Date()
         store.savePatients()
+
+        // Immediately ready for next entry
+        addPatient()
     }
 }
 
@@ -333,10 +327,9 @@ private struct PatientDetailHost: View {
 
             Group {
                 if tab == 0 {
-                    // Your PatientDemographicsView requires closures (per your error)
                     PatientDemographicsView(
                         patient: $patient,
-                        onSave: {  onSavePatient() },
+                        onSave: { onSavePatient() },
                         onRequestDelete: { onRequestDelete() }
                     )
                 } else {
@@ -354,6 +347,120 @@ private struct PatientDetailHost: View {
         if !en.isEmpty { return en }
         if !ar.isEmpty { return ar }
         return "Patient"
+    }
+}
+
+// MARK: - Encounter Card (Inpatient / Clinic + date + 10AM–10PM slots)
+
+private struct EncounterTypeCard: View {
+    var patient: Binding<Patient>?
+
+    @State private var clinicDay: Date = Date()
+
+    var body: some View {
+        GroupBox {
+            if let patient {
+                VStack(alignment: .leading, spacing: 10) {
+
+                    Picker("Encounter", selection: patient.encounterType) {
+                        ForEach(EncounterType.allCases) { t in
+                            Text(t.rawValue).tag(t)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if patient.wrappedValue.encounterType == .clinic {
+                        // Date (day)
+                        DatePicker("Date", selection: Binding(
+                            get: {
+                                patient.wrappedValue.appointmentDate ?? Date()
+                            },
+                            set: { newDate in
+                                // keep time if already set, else default to 10:00 AM
+                                let base = patient.wrappedValue.appointmentDate ?? defaultClinicTime(on: newDate)
+                                patient.wrappedValue.appointmentDate = combine(day: newDate, timeFrom: base)
+                            }
+                        ), displayedComponents: [.date])
+
+                        // Time slots
+                        Menu {
+                            let day = (patient.wrappedValue.appointmentDate ?? Date())
+                            ForEach(clinicTimeSlots(for: day), id: \.self) { slot in
+                                Button(slot.formatted(date: .omitted, time: .shortened)) {
+                                    let currentDay = patient.wrappedValue.appointmentDate ?? day
+                                    patient.wrappedValue.appointmentDate = combine(day: currentDay, timeFrom: slot)
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text("Time")
+                                Spacer()
+                                Text((patient.wrappedValue.appointmentDate ?? defaultClinicTime(on: Date()))
+                                    .formatted(date: .omitted, time: .shortened))
+                                    .foregroundStyle(.secondary)
+                                Image(systemName: "chevron.down")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 2)
+
+                    } else {
+                        // Inpatient: clear appointment
+                        if patient.wrappedValue.appointmentDate != nil {
+                            Text("Clinic appointment cleared.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .onAppear {
+                                    patient.wrappedValue.appointmentDate = nil
+                                }
+                        } else {
+                            Text("Inpatient workflow")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            } else {
+                Text("Select a patient")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // ✅ Default clinic time: 10:00 AM
+    private func defaultClinicTime(on day: Date) -> Date {
+        var cal = Calendar.current
+        cal.locale = .current
+        return cal.date(bySettingHour: 10, minute: 0, second: 0, of: day) ?? day
+    }
+
+    // ✅ Combine day + time (keeps same day, replaces hour/minute)
+    private func combine(day: Date, timeFrom: Date) -> Date {
+        let cal = Calendar.current
+        let h = cal.component(.hour, from: timeFrom)
+        let m = cal.component(.minute, from: timeFrom)
+        return cal.date(bySettingHour: h, minute: m, second: 0, of: day) ?? day
+    }
+
+    // ✅ Time slots 10:00 AM → 10:00 PM, every 15 min
+    private func clinicTimeSlots(for day: Date) -> [Date] {
+        var cal = Calendar.current
+        cal.locale = .current
+
+        guard let start = cal.date(bySettingHour: 10, minute: 0, second: 0, of: day),
+              let end = cal.date(bySettingHour: 22, minute: 0, second: 0, of: day) else {
+            return []
+        }
+
+        var slots: [Date] = []
+        var t = start
+        while t <= end {
+            slots.append(t)
+            t = cal.date(byAdding: .minute, value: 15, to: t) ?? t.addingTimeInterval(15 * 60)
+        }
+        return slots
     }
 }
 
@@ -407,15 +514,11 @@ private struct PatientFilterChips: View {
             }
 
             HStack(spacing: 8) {
-                Toggle(isOn: $hasNotes) {
-                    chipLabel("Has Notes")
-                }
-                .toggleStyle(.button)
+                Toggle(isOn: $hasNotes) { chipLabel("Has Notes") }
+                    .toggleStyle(.button)
 
-                Toggle(isOn: $hasImaging) {
-                    chipLabel("Has Imaging")
-                }
-                .toggleStyle(.button)
+                Toggle(isOn: $hasImaging) { chipLabel("Has Imaging") }
+                    .toggleStyle(.button)
             }
         }
     }
@@ -427,146 +530,5 @@ private struct PatientFilterChips: View {
             .padding(.vertical, 6)
             .background(.thinMaterial)
             .clipShape(Capsule())
-    }
-}
-
-// MARK: - Global Search (all notes + all attachments across all patients)
-
-private struct GlobalRecordSearchView: View {
-
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: EMRStore
-
-    @State private var q: String = ""
-
-    private var matchedNotes: [RecordNote] {
-        let query = q.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return [] }
-
-        return store.notes.filter { (n: RecordNote) in
-            let hay = [
-                n.displayTitle,
-                n.type.rawValue,
-                n.body
-            ].joined(separator: " ").lowercased()
-            return hay.contains(query)
-        }
-        .sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    private var matchedAttachments: [Attachment] {
-        let query = q.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return [] }
-
-        return store.attachments.filter { (a: Attachment) in
-            let hay = [
-                a.category.rawValue,
-                a.originalFileName,
-                a.storedFileName
-            ].joined(separator: " ").lowercased()
-            return hay.contains(query)
-        }
-        .sorted { $0.originalFileName.localizedCaseInsensitiveCompare($1.originalFileName) == .orderedAscending }
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-
-                if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ContentUnavailableView("Search records", systemImage: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                } else {
-
-                    if !matchedNotes.isEmpty {
-                        Section("Notes") {
-                            ForEach(matchedNotes) { n in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(noteTitle(n))
-                                        .font(.headline)
-                                    Text(patientName(n.patientID))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-
-                    if !matchedAttachments.isEmpty {
-                        Section("Attachments") {
-                            ForEach(matchedAttachments) { a in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(a.originalFileName)
-                                        .font(.headline)
-                                    Text("\(patientName(a.patientID)) • \(a.category.rawValue)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-
-                    if matchedNotes.isEmpty && matchedAttachments.isEmpty {
-                        ContentUnavailableView("No matches", systemImage: "doc.text.magnifyingglass")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .navigationTitle("Global Search")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $q, prompt: "Search notes + attachments")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private func patientName(_ patientID: UUID) -> String {
-        guard let p = store.patients.first(where: { $0.id == patientID }) else { return "Unknown patient" }
-        let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        let ar = p.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !en.isEmpty { return en }
-        if !ar.isEmpty { return ar }
-        return "Unnamed patient"
-    }
-
-    private func noteTitle(_ n: RecordNote) -> String {
-        let t = n.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.isEmpty ? "Clinical Note" : t
-    }
-}
-
-// MARK: - Minimal Reference Center (so ReferencesInlineCard compiles)
-
-private struct ReferenceCenterView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Text("Reference Center")
-                    .font(.headline)
-                Text("You can build your reference content here (GCS, Hunt/Hess, Fisher, etc.).")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .navigationTitle("References")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Date helper
-
-private extension Date {
-    var ageYears: Int {
-        Calendar.current.dateComponents([.year], from: self, to: Date()).year ?? 0
     }
 }

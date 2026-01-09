@@ -9,6 +9,13 @@ public enum Gender: String, Codable, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+// ✅ NEW: Encounter type for patient workflow
+public enum EncounterType: String, Codable, CaseIterable, Identifiable {
+    case inpatient = "Inpatient"
+    case clinic = "Clinic"
+    public var id: String { rawValue }
+}
+
 public var treatingPhysicianName: String = ""
 
 public struct Patient: Identifiable, Codable, Hashable {
@@ -26,6 +33,11 @@ public struct Patient: Identifiable, Codable, Hashable {
     public var mrn: String = ""            // digits only (enforced in UI)
     public var nationalID: String = ""      // digits only (enforced in UI)
     public var passport: String = ""        // alphanumeric caps (enforced in UI)
+
+    // ✅ NEW
+    public var encounterType: EncounterType = .inpatient
+    /// Used only for clinic patients (date + time)
+    public var appointmentDate: Date? = nil
 
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
@@ -243,11 +255,10 @@ public struct RecordNote: Identifiable, Codable, Hashable {
         self.type = type
         self.body = type.defaultBody
 
-        // Default title behavior
         if type == .blank {
             self.title = "Clinical Note"
         } else {
-            self.title = "" // ignored for non-blank
+            self.title = ""
         }
     }
 }
@@ -269,7 +280,7 @@ public struct Attachment: Identifiable, Codable, Hashable {
 
     public var category: Category
     public var originalFileName: String
-    public var storedFileName: String        // filename saved in app Documents
+    public var storedFileName: String
     public var importedAt: Date = Date()
 
     public init(patientID: UUID,

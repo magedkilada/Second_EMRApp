@@ -1,102 +1,84 @@
 import Foundation
 
-final class OpenAIService {
+// MARK: - OpenAI Service
+
+actor OpenAIService {
+    
     static let shared = OpenAIService()
+    
     private init() {}
-
-    // Reads the key from Info.plist (which you already confirmed prints correctly)
-    private var apiKey: String {
-        let raw = (Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String) ?? ""
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// One-shot text generation (no tools, no streaming)
+    
     func generate(
         instructions: String,
         input: String,
-        maxOutputTokens: Int = 1200,
-        temperature: Double = 0.2
+        maxOutputTokens: Int = 1000,
+        temperature: Double = 0.7
     ) async throws -> String {
-
-        guard !apiKey.isEmpty, !apiKey.contains("$(") else {
-            throw NSError(domain: "OpenAI", code: -1, userInfo: [
-                NSLocalizedDescriptionKey: "Missing OPENAI_API_KEY in app Info settings."
-            ])
+        
+        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String,
+              !apiKey.isEmpty else {
+            throw OpenAIError.noAPIKey
         }
-
-        var req = URLRequest(url: OpenAIConfig.endpoint)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body = OARequest(
-            model: OpenAIConfig.model,
-            input: input,
-            instructions: instructions,
-            max_output_tokens: maxOutputTokens,
-            temperature: temperature,
-            store: false
-        )
-        req.httpBody = try JSONEncoder().encode(body)
-
-        let (data, resp) = try await URLSession.shared.data(for: req)
-
-        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let raw = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw NSError(domain: "OpenAI", code: -2, userInfo: [
-                NSLocalizedDescriptionKey: "OpenAI API error: \(raw)"
-            ])
+        
+        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let messages: [[String: String]] = [
+            ["role": "system", "content": instructions],
+            ["role": "user", "content": input]
+        ]
+        
+        let body: [String: Any] = [
+            "model": "gpt-4",
+            "messages": messages,
+            "max_tokens": maxOutputTokens,
+            "temperature": temperature
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenAIError.invalidResponse
         }
-
-        let decoded = try JSONDecoder().decode(OAResponse.self, from: data)
-
-        if let out = decoded.output_text?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !out.isEmpty {
-            return out
+        
+        guard httpResponse.statusCode == 200 else {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw OpenAIError.apiError(statusCode: httpResponse.statusCode, message: errorMessage)
         }
-
-        if let out = decoded.extractTextBestEffort(), !out.isEmpty {
-            return out
+        
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let choices = json?["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw OpenAIError.invalidResponse
         }
-
-        return "No response."
+        
+        return content
     }
 }
 
-// MARK: - Models
+// MARK: - Errors
 
-private struct OARequest: Encodable {
-    let model: String
-    let input: String
-    let instructions: String
-    let max_output_tokens: Int
-    let temperature: Double
-    let store: Bool
-}
-
-private struct OAResponse: Decodable {
-    let output_text: String?
-    let output: [OutputItem]?
-
-    struct OutputItem: Decodable {
-        let type: String?
-        let content: [ContentPart]?
-
-        struct ContentPart: Decodable {
-            let type: String?
-            let text: String?
+enum OpenAIError: LocalizedError {
+    case noAPIKey
+    case invalidResponse
+    case apiError(statusCode: Int, message: String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .noAPIKey:
+            return "OpenAI API key not found. Please add OPENAI_API_KEY to Info.plist"
+        case .invalidResponse:
+            return "Invalid response from OpenAI API"
+        case .apiError(let statusCode, let message):
+            return "OpenAI API error (\(statusCode)): \(message)"
         }
     }
-
-    func extractTextBestEffort() -> String? {
-        guard let output else { return nil }
-        var chunks: [String] = []
-        for item in output {
-            for part in item.content ?? [] {
-                if let t = part.text, !t.isEmpty { chunks.append(t) }
-            }
-        }
-        let joined = chunks.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return joined.isEmpty ? nil : joined
-    }
 }
+
