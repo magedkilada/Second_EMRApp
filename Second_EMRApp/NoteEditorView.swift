@@ -1,5 +1,17 @@
+//
+//  NoteEditorView.swift
+//  Second_EMRApp
+//
+
 import SwiftUI
 import UIKit
+
+// Keep ONE definition in the whole project.
+// If you already have ImportSource somewhere else, delete one of them.
+enum ImportSource {
+    case files
+    case photos
+}
 
 struct NoteEditorView: View {
 
@@ -7,347 +19,260 @@ struct NoteEditorView: View {
     let patient: Patient
     let noteID: UUID
 
+    /// When this UUID changes, the editor MUST auto-save (if dirty),
+    /// then call onAutoSaveCompleted so RecordsWorkspaceView can proceed.
+    let autoSaveRequestToken: UUID
+
+    let onAutoSaveCompleted: () -> Void
+
+    /// Ask workspace to import attachment (keeps your existing pipeline unchanged)
+    let onRequestImportAttachment: (ImportSource, Attachment.Category) -> Void
+
     // MARK: - Environment
     @EnvironmentObject private var store: EMRStore
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.horizontalSizeClass) private var hSize
-    private var isPhone: Bool { hSize == .compact }
 
     // MARK: - Local state
     @State private var note: RecordNote? = nil
     @State private var editorText: String = ""
     @State private var isDirty: Bool = false
 
-    // Save UX
-    @State private var showSavedToast: Bool = false
-
-    // Confirmations
+    // UX
     @State private var showConfirmDelete: Bool = false
     @State private var showConfirmFinalize: Bool = false
+    @State private var showSavedToast: Bool = false
+    @State private var showBatchPrint: Bool = false
 
-    // Template replacement confirm
-    @State private var showReplaceTemplateConfirm: Bool = false
-    @State private var pendingTemplateText: String = ""
+    // Share sheet
+    @State private var sharePayload: SharePayload? = nil
 
-    // Share / Print
-    @State private var showShareSheet: Bool = false
-    @State private var shareItems: [Any] = []
-
-    // Batch print
-    @State private var showBatchPrintSheet: Bool = false
-
-    // Debounced autosave
-    @State private var autosaveWorkItem: DispatchWorkItem? = nil
+    // Focus
+    @FocusState private var editorFocused: Bool
 
     // MARK: - Derived
     private var canEdit: Bool { !(note?.isFinalized ?? false) }
 
-    private var patientDisplayName: String {
-        let en = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        let ar = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !en.isEmpty { return en }
-        if !ar.isEmpty { return ar }
-        return "Patient"
+    private var titleText: String {
+        note?.type.rawValue ?? "Note"
     }
-
-    private var headerPhysicianLine: String { store.treatingPhysicianName }
-    private var headerClinic: String { store.clinicName }
 
     // MARK: - Body
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 0) {
 
-            // Header
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(patientDisplayName)
-                        .font(.largeTitle).bold()
-
-                    Spacer()
-
-                    if note?.isFinalized == true {
-                        Text("FINALIZED")
-                            .font(.caption).bold()
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.thinMaterial)
-                            .clipShape(Capsule())
-                    }
-                }
-
-                Text(headerPhysicianLine)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                Text(headerClinic)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                Divider().padding(.top, 6)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-
-            // Editor
             TextEditor(text: $editorText)
-                .font(.body)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.secondarySystemBackground))
-                )
-                .padding(.horizontal)
+                .focused($editorFocused)
                 .disabled(!canEdit)
+                .padding()
                 .onChange(of: editorText) { _, _ in
                     guard canEdit else { return }
-                    markDirtyAndAutosave()
+                    isDirty = true
+                }
+                .onAppear {
+                    loadNote()
+                }
+                .onChange(of: noteID) { _, _ in
+                    loadNote()
                 }
 
-            // Bottom action bar
+            Divider()
+
             bottomBar
-                .padding(.horizontal)
-                .padding(.bottom, 10)
+                .padding()
         }
-        .navigationTitle(note?.type.rawValue ?? "Note")
+        .navigationTitle(titleText)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { topRightToolbar }
-        .onAppear { loadNoteIfNeeded() }
-        .onDisappear { saveSilentlyIfDirty() }
 
-        // Share Sheet
-        .sheet(isPresented: $showShareSheet) {
-            NoteShareSheet(items: shareItems)
+        // ✅ Auto-save trigger from RecordsWorkspaceView
+        .onChange(of: autoSaveRequestToken) { _, _ in
+            saveIfNeeded()
+            onAutoSaveCompleted()
         }
 
-        // Batch Print
-        .sheet(isPresented: $showBatchPrintSheet) {
+        // Alerts
+        .alert("Delete note?", isPresented: $showConfirmDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                deleteNote()
+            }
+        } message: {
+            Text("This will remove the note unless it is finalized.")
+        }
+
+        .alert("Finalize note?", isPresented: $showConfirmFinalize) {
+            Button("Cancel", role: .cancel) {}
+            Button("Finalize", role: .destructive) {
+                finalizeNote()
+            }
+        } message: {
+            Text("Finalized notes become read-only and cannot be deleted.")
+        }
+
+        // Share sheet (1 tap, iPad-safe)
+        .sheet(item: $sharePayload) { payload in
+            EMRShareSheetView(items: payload.items)
+        }
+
+        // Toast
+        .overlay(alignment: .bottom) {
+            if showSavedToast {
+                Text("Saved")
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .padding(.bottom, 60)
+            }
+        }
+        .sheet(isPresented: $showBatchPrint) {
             BatchPrintView(patient: patient)
                 .environmentObject(store)
         }
-
-        // Delete confirm
-        .alert("Delete note?", isPresented: $showConfirmDelete) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) { deleteNow() }
-        } message: {
-            Text("This will permanently remove this note from this device.")
-        }
-
-        // Finalize confirm (irreversible)
-        .alert("Finalize this note?", isPresented: $showConfirmFinalize) {
-            Button("Cancel", role: .cancel) { }
-            Button("Finalize", role: .destructive) { finalizeNow() }
-        } message: {
-            Text("Finalized notes cannot be edited.")
-        }
-
-        // Template replace confirm
-        .alert("Replace current note with template?", isPresented: $showReplaceTemplateConfirm) {
-            Button("Cancel", role: .cancel) { }
-            Button("Replace", role: .destructive) {
-                // ✅ user request: auto-save current before replacing (unless deleted)
-                saveSilentlyIfDirty()
-                editorText = pendingTemplateText
-                markDirtyAndAutosave()      // will save new text shortly
-            }
-        } message: {
-            Text("This will overwrite the current note text.")
-        }
-
-        // Saved toast
-        .overlay(alignment: .bottom) {
-            if showSavedToast {
-                Text("Saved ✓")
-                    .font(.headline)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Capsule())
-                    .padding(.bottom, 18)
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: showSavedToast)
     }
 
-    // MARK: - Top toolbar (✅ remove Template, keep AI/Translate only)
-    @ToolbarContentBuilder
-    private var topRightToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Menu {
-                Menu("AI") {
-                    Button("Improve note (replace)") { /* wire later */ }
-                    Button("Improve note (copy)") { /* wire later */ }
-                    Button("Ask about note") { /* wire later */ }
-                    Button("Clear AI") { /* wire later */ }
-                }
-
-                Menu("Translate") {
-                    Button("Arabic") { /* wire later */ }
-                    Button("English") { /* wire later */ }
-                    Button("French") { /* wire later */ }
-                    Button("German") { /* wire later */ }
-                    Button("Clear translation") { /* wire later */ }
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-        }
-    }
-
-    // MARK: - Bottom bar (✅ add Finalize + move Batch Print to printer menu)
     private var bottomBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
 
-            Button {
-                saveNow(showToast: true)
+            // Attachments
+            Menu {
+                ForEach(Attachment.Category.allCases) { cat in
+                    Button("Files → \(cat.rawValue)") {
+                        onRequestImportAttachment(.files, cat)
+                    }
+                    Button("Photos → \(cat.rawValue)") {
+                        onRequestImportAttachment(.photos, cat)
+                    }
+                }
             } label: {
-                Label("Save", systemImage: "square.and.arrow.down")
-                    .frame(maxWidth: .infinity)
+                Image(systemName: "paperclip")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canEdit)
 
-            // ✅ Finalize button (bottom bar)
+            Spacer()
+
+            // Delete
             Button {
-                showConfirmFinalize = true
-            } label: {
-                Label("Finalize", systemImage: "checkmark.seal")
-                    .frame(minWidth: 120)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!canEdit)
-
-            Button(role: .destructive) {
                 showConfirmDelete = true
             } label: {
                 Image(systemName: "trash")
-                    .frame(width: 44, height: 40)
             }
-            .buttonStyle(.bordered)
+            .disabled(note?.isFinalized == true)
 
+            // Share
             Button {
-                shareNow()
+                saveIfNeeded()
+                shareNote()
             } label: {
                 Image(systemName: "square.and.arrow.up")
-                    .frame(width: 44, height: 40)
             }
-            .buttonStyle(.bordered)
 
-            // ✅ Printer is now a menu: Print this + Batch Print
-            Menu {
-                Button("Print This Note", systemImage: "printer") {
-                    printNow()
-                }
-                Button("Batch Print…", systemImage: "tray.full") {
-                    showBatchPrintSheet = true
-                }
+            // Print single
+            Button {
+                saveIfNeeded()
+                printNote()
             } label: {
                 Image(systemName: "printer")
-                    .frame(width: 44, height: 40)
             }
-            .buttonStyle(.bordered)
+
+            // ✅ Batch Print (NEW)
+            Button {
+                saveIfNeeded()
+                showBatchPrint = true
+            } label: {
+                Image(systemName: "printer.fill")
+            }
+            .help("Batch Print")
+
+            // Finalize
+            Button {
+                showConfirmFinalize = true
+            } label: {
+                Label("Finalize", systemImage: "checkmark.seal.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(note?.isFinalized == true)
         }
     }
-
-    // MARK: - Public API called by the LEFT templates list (use this from RecordsWorkspaceView)
-    func requestReplaceWithTemplate(_ type: RecordNoteType) {
-        pendingTemplateText = store.templateText(for: type)
-        showReplaceTemplateConfirm = true
-    }
-
-    // MARK: - Load
-    private func loadNoteIfNeeded() {
-        if let n = store.note(by: noteID) {
-            note = n
-            editorText = n.body
-            isDirty = false
-        } else {
+    // MARK: - Data
+    private func loadNote() {
+        guard let n = store.note(by: noteID) else {
             note = nil
             editorText = ""
+            isDirty = false
+            return
         }
+        note = n
+        editorText = n.body
+        isDirty = false
     }
 
-    // MARK: - Dirty + autosave
-    private func markDirtyAndAutosave() {
-        isDirty = true
-        autosaveWorkItem?.cancel()
-        let work = DispatchWorkItem { saveSilentlyIfDirty() }
-        autosaveWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
-    }
-
-    private func saveSilentlyIfDirty() {
-        guard isDirty else { return }
-        saveNow(showToast: false)
-    }
-
-    // MARK: - Save
-    private func saveNow(showToast: Bool) {
-        guard var n = note else { return }
+    private func saveIfNeeded() {
         guard canEdit else { return }
+        guard isDirty else { return }
+        guard var n = store.note(by: noteID) else { return }
 
         n.body = editorText
         n.updatedAt = Date()
 
         store.updateNote(n)
-
         note = n
         isDirty = false
 
-        if showToast {
-            showSavedToast = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                showSavedToast = false
-            }
-
-            // ✅ iPad workflow: clear editor after save
-            if !isPhone {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    store.selectedNoteID = nil
-                }
-            }
+        showSavedToast = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            showSavedToast = false
         }
     }
 
-    // MARK: - Finalize
-    private func finalizeNow() {
-        saveSilentlyIfDirty()
-        guard var n = note else { return }
-        n.isFinalized = true
-        n.updatedAt = Date()
-        store.updateNote(n)
-        note = n
+    private func deleteNote() {
+        // ✅ Use your store API (handles finalized + SwiftUI refresh correctly)
+        store.deleteNote(noteID)
     }
 
-    // MARK: - Delete
-    private func deleteNow() {
-        store.deleteNote(id: noteID)
-
-        if isPhone {
-            dismiss()
-        } else {
-            store.selectedNoteID = nil
-        }
+    private func finalizeNote() {
+        saveIfNeeded()
+        store.finalizeNote(noteID)
+        note = store.note(by: noteID)
     }
+
     // MARK: - Share / Print
-    private func shareNow() {
-        saveSilentlyIfDirty()
-        shareItems = ["Medical Record", editorText]
-        showShareSheet = true
+    private func shareNote() {
+        let text = composePrintableText()
+        sharePayload = SharePayload(items: [text])
     }
 
-    private func printNow() {
-        saveSilentlyIfDirty()
-        PrintShareHelper.printText(editorText, jobName: "Medical Record")
+    private func printNote() {
+        EMRPrintHelper.printTextAsPDF(
+            composePrintableText(),
+            title: titleText,
+            jobName: "Medical Note"
+        )
     }
-}
 
-// MARK: - Share Sheet (UIKit)
-private struct NoteShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    private func composePrintableText() -> String {
+        let name = (!patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ? patient.nameEnglish
+            : (patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unnamed Patient" : patient.nameArabic)
+
+        let header = """
+        \(name)
+        \(store.treatingPhysicianName)
+        \(store.clinicName)
+
+        """
+
+        return header + editorText
     }
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
+
+    private func resignKeyboardThen(_ action: @escaping () -> Void) {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            action()
+        }
+    }
+
+    // MARK: - Sheet payload
+    private struct SharePayload: Identifiable {
+        let id = UUID()
+        let items: [Any]
+    }
 }

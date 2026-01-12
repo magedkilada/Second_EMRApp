@@ -1,117 +1,136 @@
 import SwiftUI
+import UIKit
 
 struct PatientDemographicsView: View {
-    @Binding var patient: Patient
-    let onSave: () -> Void
-    let onRequestDelete: () -> Void
 
-    // ✅ must be INSIDE the struct (so it can see `patient`)
-    private var ageText: String {
-        let cal = Calendar.current
-        let now = Date()
-        let comps = cal.dateComponents([.year, .month], from: patient.dob, to: now)
-        let y = max(0, comps.year ?? 0)
-        let m = max(0, comps.month ?? 0)
-        return "\(y) years \(m) months"
-    }
+    @Binding var patient: Patient
+    let onSaveAndNew: () -> Void
+    let onRequestDelete: () -> Void
+    let onPrint: (() -> Void)?
 
     var body: some View {
-        Form {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
 
-            Section("Name") {
-                TextField("Name (English) *", text: $patient.nameEnglish)
-                TextField("Name (Arabic)", text: $patient.nameArabic)
-            }
+                GroupBox("Patient") {
+                    VStack(alignment: .leading, spacing: 12) {
 
-            Section("Date of Birth") {
-                DatePicker("DOB *", selection: $patient.dob, displayedComponents: .date)
-                    .onChange(of: patient.dob) { _, newValue in
-                        patient.dob = min(newValue, Date())
-                    }
+                        labeledTextField("Name (English)", text: $patient.nameEnglish)
+                            .textInputAutocapitalization(.words)
 
-                HStack {
-                    Text("Age")
-                    Spacer()
-                    Text(ageText)
-                        .foregroundStyle(.secondary)
-                }
-            }
+                        labeledTextField("Name (Arabic)", text: $patient.nameArabic)
+                            .textInputAutocapitalization(.words)
 
-            Section("Sex") {
-                Picker("Sex", selection: $patient.gender) {
-                    ForEach(Gender.allCases) { g in
-                        Text(g.rawValue).tag(g)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("DOB").font(.headline)
+                                Spacer()
+                                Text(ageString(from: patient.dob))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
 
-            Section("Identifiers") {
-                HStack(spacing: 8) {
-                    TextField("MRN", text: $patient.mrn)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .keyboardType(.asciiCapable)
-                        .onChange(of: patient.mrn) { _, newValue in
-                            let filtered = newValue
-                                .uppercased()
-                                .filter { ("A"..."Z").contains($0) || ("0"..."9").contains($0) }
-                            if filtered != newValue { patient.mrn = filtered }
+                            DatePicker("", selection: $patient.dob, displayedComponents: .date)
+                                .labelsHidden()
+                                .onChange(of: patient.dob) { _, newValue in
+                                    patient.dob = min(newValue, Date())
+                                }
                         }
 
-                    Button {
-                        UIPasteboard.general.string = patient.mrn
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Sex").font(.headline)
+                            Picker("", selection: $patient.gender) {
+                                ForEach(Gender.allCases) { g in
+                                    Text(g.rawValue).tag(g)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                        }
                     }
-                    .buttonStyle(.borderless)
-                    .disabled(patient.mrn.isEmpty)
-                    .help("Copy MRN")
+                    .padding(.vertical, 4)
                 }
 
-                TextField("National ID (digits only)", text: $patient.nationalID)
-                    .keyboardType(.numberPad)
-                    .onChange(of: patient.nationalID) { _, newValue in
-                        patient.nationalID = digitsOnly(newValue)
+                GroupBox("Identifiers") {
+                    VStack(alignment: .leading, spacing: 12) {
+
+                        labeledTextField("MRN (CAPS + digits only)", text: $patient.mrn)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+
+                        labeledTextField("National ID (digits only)", text: $patient.nationalID)
+                            .keyboardType(.numberPad)
+
+                        labeledTextField("Passport (CAPS + digits)", text: $patient.passport)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
                     }
-
-                TextField("Passport (CAPS + digits)", text: $patient.passport)
-                    .textInputAutocapitalization(.characters)
-                    .onChange(of: patient.passport) { _, newValue in
-                        patient.passport = passportFilter(newValue)
-                    }
-            }
-
-            Section("Contact") {
-                TextField("Phone *", text: $patient.phone)
-                    .keyboardType(.phonePad)
-                    .onChange(of: patient.phone) { _, newValue in
-                        patient.phone = digitsOnly(newValue)
-                    }
-
-                TextField("Email", text: $patient.email)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-            }
-
-            Section {
-                Button { onSave() } label: {
-                    Label("Save Patient", systemImage: "checkmark.circle")
+                    .padding(.vertical, 4)
                 }
 
-                Button(role: .destructive) { onRequestDelete() } label: {
-                    Label("Delete Patient", systemImage: "trash")
+                GroupBox("Contact") {
+                    VStack(alignment: .leading, spacing: 12) {
+
+                        labeledTextField("Phone (+ and digits)", text: $patient.phone)
+                            .keyboardType(.phonePad)
+
+                        labeledTextField("Email", text: $patient.email)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    .padding(.vertical, 4)
                 }
-            } footer: {
-                Text("Required: Name (English), DOB (not future), Phone.")
+
+                HStack(spacing: 12) {
+
+                    if let onPrint {
+                        Button { onPrintReliable(onPrint) } label: {
+                            Label("Print", systemImage: "printer")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Button { onSaveAndNew() } label: {
+                        Label("Save & New", systemImage: "person.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button(role: .destructive) { onRequestDelete() } label: {
+                        Label("Delete", systemImage: "trash")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.top, 6)
             }
+            .padding()
+        }
+        .navigationTitle("Demographics")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: - Helpers
+
+    private func labeledTextField(_ label: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.headline)
+            TextField(label, text: text)
+                .textFieldStyle(.roundedBorder)
         }
     }
 
-    private func digitsOnly(_ s: String) -> String { s.filter(\.isNumber) }
+    private func ageString(from dob: Date) -> String {
+        let cal = Calendar.current
+        let years = cal.dateComponents([.year], from: dob, to: Date()).year ?? 0
+        return "Age: \(max(0, years))"
+    }
 
-    private func passportFilter(_ s: String) -> String {
-        s.uppercased().filter { $0.isNumber || ($0 >= "A" && $0 <= "Z") }
+    private func onPrintReliable(_ action: @escaping () -> Void) {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { action() }
     }
 }

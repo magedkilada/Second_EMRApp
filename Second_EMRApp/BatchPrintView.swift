@@ -1,296 +1,136 @@
+//
+//  BatchPrintView.swift
+//  Second_EMRApp
+//
+//  Batch printing for selected notes of ONE patient.
+//  - Header includes: Physician + Clinic + Patient demographics (EXCLUDING Passport & National ID)
+//  - Dismiss AFTER print is presented (prevents flash/disappear)
+//
+
 import SwiftUI
 
 struct BatchPrintView: View {
 
-    // MARK: - Inputs
     let patient: Patient
 
-    /// Optional header info (pass from NoteEditorView or RecordsWorkspaceView)
-    let clinicName: String
-    let physicianName: String
-    let physicianSpecialty: String
-
-    // MARK: - Environment
     @EnvironmentObject private var store: EMRStore
     @Environment(\.dismiss) private var dismiss
 
-    // MARK: - Selection
-    @State private var selectedNotes: Set<UUID> = []
-    @State private var selectedAttachments: Set<UUID> = []
+    @State private var selectedNoteIDs: Set<UUID> = []
 
-    // MARK: - Init
-    init(
-        patient: Patient,
-        clinicName: String = "",
-        physicianName: String = "",
-        physicianSpecialty: String = ""
-    ) {
-        self.patient = patient
-        self.clinicName = clinicName
-        self.physicianName = physicianName
-        self.physicianSpecialty = physicianSpecialty
+    private var patientNotes: [RecordNote] {
+        store.notes
+            .filter { $0.patientID == patient.id && !$0.isDeleted }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var body: some View {
         NavigationStack {
             List {
-
-                // MARK: Header (shows on screen; coordinator should include in print header too)
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(patientDisplayName)
-                            .font(.headline)
-
-                        Text("MRN: \(patient.mrn.isEmpty ? "—" : patient.mrn)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                        if !clinicNameTrimmed.isEmpty || !physicianNameTrimmed.isEmpty || !physicianSpecialtyTrimmed.isEmpty {
-                            Divider().padding(.vertical, 6)
-
-                            if !clinicNameTrimmed.isEmpty {
-                                Text(clinicNameTrimmed)
-                                    .font(.subheadline)
-                            }
-                            if !physicianNameTrimmed.isEmpty {
-                                Text(physicianNameTrimmed)
-                                    .font(.subheadline)
-                            }
-                            if !physicianSpecialtyTrimmed.isEmpty {
-                                Text(physicianSpecialtyTrimmed)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
+                ForEach(patientNotes) { note in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(note.displayTitle).font(.headline)
+                            Text(note.type.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                    }
-                    .padding(.vertical, 4)
-                } header: {
-                    Text("Header")
-                }
 
-                // MARK: Notes & Prescriptions (single list, as you had)
-                Section {
-                    HStack(spacing: 12) {
-                        Button("Select All") { selectAllNotes() }
-                        Button("Clear") { selectedNotes.removeAll() }
                         Spacer()
-                        Text("\(selectedNotes.count)/\(patientNotes.count)")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.borderless)
 
-                    ForEach(patientNotes) { note in
-                        MultipleSelectionRow(
-                            title: note.displayTitle,
-                            subtitle: note.type.rawValue,
-                            isSelected: selectedNotes.contains(note.id)
-                        ) {
-                            toggle(note.id, in: &selectedNotes)
-                        }
+                        Image(systemName: selectedNoteIDs.contains(note.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selectedNoteIDs.contains(note.id) ? .blue : .secondary)
                     }
-                } header: {
-                    Text("Notes & Prescriptions")
-                }
-
-                // MARK: Attachments
-                Section {
-                    HStack(spacing: 12) {
-                        Button("Select All") { selectAllAttachments() }
-                        Button("Clear") { selectedAttachments.removeAll() }
-                        Spacer()
-                        Text("\(selectedAttachments.count)/\(patientAttachments.count)")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.borderless)
-
-                    ForEach(patientAttachments) { att in
-                        MultipleSelectionRow(
-                            title: att.originalFileName,
-                            subtitle: att.category.rawValue,
-                            isSelected: selectedAttachments.contains(att.id)
-                        ) {
-                            toggle(att.id, in: &selectedAttachments)
-                        }
-                    }
-                } header: {
-                    Text("Attachments")
+                    .contentShape(Rectangle())
+                    .onTapGesture { toggle(note.id) }
                 }
             }
             .navigationTitle("Batch Print")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Print") {
-                        BatchPrintCoordinator.print(
-                            patient: patient,
-                            notes: selectedNotes,
-                            attachments: selectedAttachments,
-                            store: store
-                        )
-                        dismiss()
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Print \(selectedNoteIDs.count)") {
+                        printSelectedAndDismiss()
                     }
-                    .disabled(selectedNotes.isEmpty && selectedAttachments.isEmpty)
+                    .disabled(selectedNoteIDs.isEmpty)
                 }
             }
         }
     }
 
-    // MARK: - Data
-
-    private var patientNotes: [RecordNote] {
-        store.notes
-            .filter { $0.patientID == patient.id }
-            .sorted { $0.updatedAt > $1.updatedAt }
+    private func toggle(_ id: UUID) {
+        if selectedNoteIDs.contains(id) { selectedNoteIDs.remove(id) }
+        else { selectedNoteIDs.insert(id) }
     }
 
-    private var patientAttachments: [Attachment] {
-        store.attachments
-            .filter { $0.patientID == patient.id }
-            .sorted { $0.originalFileName.localizedCaseInsensitiveCompare($1.originalFileName) == .orderedAscending }
-    }
-
-    // MARK: - Helpers
-
-    private func toggle(_ id: UUID, in set: inout Set<UUID>) {
-        if set.contains(id) {
-            set.remove(id)
-        } else {
-            set.insert(id)
-        }
-    }
-
-    private func selectAllNotes() {
-        selectedNotes = Set(patientNotes.map { $0.id })
-    }
-
-    private func selectAllAttachments() {
-        selectedAttachments = Set(patientAttachments.map { $0.id })
-    }
-
-    private var patientDisplayName: String {
-        let en = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        let ar = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !en.isEmpty { return en }
-        if !ar.isEmpty { return ar }
-        return "Patient"
-    }
-
-    private var clinicNameTrimmed: String {
-        clinicName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var physicianNameTrimmed: String {
-        physicianName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var physicianSpecialtyTrimmed: String {
-        physicianSpecialty.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}// MARK: - MultipleSelectionRow (helper)
-
-private struct MultipleSelectionRow: View {
-    let title: String
-    let subtitle: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .imageScale(.large)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - BatchPrintCoordinator (minimal working)
-
-enum BatchPrintCoordinator {
-
-    /// Prints selected notes as TEXT and selected attachments as FILES (PDF/images/etc.).
-    static func print(
-        patient: Patient,
-        notes: Set<UUID>,
-        attachments: Set<UUID>,
-        store: EMRStore
-    ) {
-        // 1) Notes -> one combined text print job
-        let selectedNotes: [RecordNote] = store.notes
-            .filter { $0.patientID == patient.id && notes.contains($0.id) }
-            .sorted { $0.updatedAt > $1.updatedAt }
-
-        if !selectedNotes.isEmpty {
-            let text = buildBatchText(patient: patient, notes: selectedNotes)
-            PrintShareHelper.printText(text)   // uses your existing helper
-        }
-
-        // 2) Attachments -> print each file (PDF/image) as its own print job
-        let selectedAttachments: [Attachment] = store.attachments
-            .filter { $0.patientID == patient.id && attachments.contains($0.id) }
-
-        for att in selectedAttachments {
-            if let url = attachmentFileURL(att, store: store) {
-                PrintShareHelper.printFile(url) // ✅ you need this helper; see note below
-            }
-        }
-    }
-
-    private static func buildBatchText(patient: Patient, notes: [RecordNote]) -> String {
-        let nameEN = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nameAR = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = !nameEN.isEmpty ? nameEN : (!nameAR.isEmpty ? nameAR : "Patient")
-
+    // MARK: - Header (baseline truth)
+    private func headerBlock() -> String {
         var lines: [String] = []
-        lines.append("=== \(name) ===")
-        lines.append("MRN: \(patient.mrn.isEmpty ? "—" : patient.mrn)")
-        lines.append("DOB: \(patient.dob.formatted(date: .abbreviated, time: .omitted))")
+
+        let physician = store.treatingPhysicianName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clinic = store.clinicName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !physician.isEmpty { lines.append(physician) }
+        if !clinic.isEmpty { lines.append(clinic) }
+
         lines.append("")
 
-        for n in notes {
-            lines.append("--------------------------------------------------")
-            lines.append(n.displayTitle)
-            lines.append(n.type.rawValue)
-            lines.append("Updated: \(n.updatedAt.formatted(date: .abbreviated, time: .shortened))")
-            lines.append("")
-            lines.append(n.body)
-            lines.append("")
-        }
+        // Patient demographics (EXCLUDE passport + national ID)
+        lines.append("Patient: \(patientDisplayName())")
+
+        let mrn = patient.mrn.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !mrn.isEmpty { lines.append("MRN: \(mrn)") }
+
+        let dob = patient.dob.formatted(date: .abbreviated, time: .omitted)
+        lines.append("DOB: \(dob)")
+
+        let phone = patient.phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !phone.isEmpty { lines.append("Phone: \(phone)") }
+
+        lines.append("Sex: \(patient.gender.rawValue)")
+
+        lines.append("")
+        lines.append(String(repeating: "=", count: 60))
+        lines.append("")
 
         return lines.joined(separator: "\n")
     }
 
-    private static func attachmentFileURL(_ att: Attachment, store: EMRStore) -> URL? {
-        // If your EMRStore already has a helper like attachmentFileURL(_:) use it instead.
-        // Otherwise, this assumes your app stores attachments under Documents/EMR_Attachments/<patientID>/<category>/<storedFileName>
-        let fm = FileManager.default
-        guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+    private func patientDisplayName() -> String {
+        let en = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ar = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !en.isEmpty ? en : (!ar.isEmpty ? ar : "Unnamed patient")
+    }
 
-        return docs
-            .appendingPathComponent("EMR_Attachments", isDirectory: true)
-            .appendingPathComponent(att.patientID.uuidString, isDirectory: true)
-            .appendingPathComponent(att.category.rawValue, isDirectory: true)
-            .appendingPathComponent(att.storedFileName, isDirectory: false)
+    // MARK: - Print
+    private func printSelectedAndDismiss() {
+        let notesToPrint = patientNotes
+            .filter { selectedNoteIDs.contains($0.id) }
+            .sorted { $0.updatedAt < $1.updatedAt } // older → newer
+
+        var combinedText = headerBlock()
+
+        for (index, note) in notesToPrint.enumerated() {
+            if index > 0 {
+                combinedText += "\n\n" + String(repeating: "=", count: 60) + "\n\n"
+            }
+
+            combinedText += "\(note.displayTitle)\n"
+            combinedText += "\(note.type.rawValue)\n"
+            combinedText += "Updated: \(note.updatedAt.formatted(date: .abbreviated, time: .shortened))\n\n"
+            combinedText += note.body
+        }
+
+        EMRPrintHelper.printTextAsPDF(
+            combinedText,
+            title: "Batch Medical Records",
+            jobName: "Batch Medical Records"
+        ) {
+            dismiss()
+        }
     }
 }
-
-

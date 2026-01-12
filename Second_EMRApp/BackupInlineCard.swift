@@ -118,6 +118,7 @@ struct BackupInlineCard: View {
         .sheet(isPresented: $showAutoBackupSettings) {
             NavigationStack {
                 AutoBackupSettingsView()
+                    .environmentObject(store)
             }
         }
     }

@@ -18,7 +18,7 @@ private func renderNoteWithHeader(
     let patientName = patient.nameEnglish.isEmpty ? "—" : patient.nameEnglish
     let mrn = patient.mrn.isEmpty ? "—" : patient.mrn
     let dob = dfDate.string(from: patient.dob)
-    let sex = patient.gender.rawValue
+    let sex = "—"   // Patient model currently has no gender field
     let phone = patient.phone.isEmpty ? "—" : patient.phone
 
     let created = dfDateTime.string(from: note.createdAt)

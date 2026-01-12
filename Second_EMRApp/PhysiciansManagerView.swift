@@ -1,209 +1,115 @@
 import SwiftUI
 
-// MARK: - Manager
-
 struct PhysiciansManagerView: View {
+
     @EnvironmentObject private var physicians: PhysiciansStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showAdd = false
-    @State private var editTarget: Physician? = nil
-
-    @State private var pendingDelete: Physician? = nil
-    @State private var confirmDelete = false
+    @State private var editingPhysician: Physician? = nil
+    @State private var showEditor = false
 
     var body: some View {
         NavigationStack {
             List {
-                if physicians.physicians.isEmpty {
-                    ContentUnavailableView("No physicians",
-                                           systemImage: "person.crop.circle.badge.questionmark")
-                } else {
-                    Section("Physicians") {
-                        ForEach(physicians.physicians) { p in
-                            PhysicianRow(
-                                physician: p,
-                                isSelected: physicians.selectedPhysicianID == p.id,
-                                onSelect: {
-                                    physicians.selectedPhysicianID = p.id
-                                    physicians.save()
-                                },
-                                onEdit: { editTarget = p },
-                                onDelete: {
-                                    pendingDelete = p
-                                    confirmDelete = true
-                                }
-                            )
+                ForEach(physicians.physicians) { physician in
+                    Button {
+                        editingPhysician = physician
+                        showEditor = true
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(physician.name.isEmpty ? "Unnamed Physician" : physician.name)
+                                .font(.headline)
+
+                            if !physician.specialty.isEmpty {
+                                Text(physician.specialty)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !physician.clinic.isEmpty {
+                                Text(physician.clinic)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .onDelete { indexSet in
+                    for index in indexSet {
+                        let id = physicians.physicians[index].id
+                        physicians.deletePhysician(id: id)
                     }
                 }
             }
             .navigationTitle("Manage Physicians")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+
+                ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showAdd = true
+                        editingPhysician = physicians.addPhysician()
+                        showEditor = true
                     } label: {
-                        Label("Add", systemImage: "plus")
+                        Image(systemName: "plus")
                     }
                 }
             }
-
-            // ✅ Delete confirmation
-            .alert("Delete physician?", isPresented: $confirmDelete) {
-                Button("Cancel", role: .cancel) { pendingDelete = nil }
-                Button("Delete", role: .destructive) {
-                    guard let p = pendingDelete else { return }
-                    physicians.delete(id: p.id)
-                    pendingDelete = nil
-                }
-            } message: {
-                Text("This cannot be undone.")
-            }
-
-            // ✅ Add
-            .sheet(isPresented: $showAdd) {
-                AddPhysicianView { newPhysician in
-                    physicians.add(newPhysician)
-                }
-            }
-
-            // ✅ Edit
-            .sheet(item: $editTarget) { p in
-                EditPhysicianView(physician: p) { updated in
-                    physicians.update(updated)
+            .sheet(isPresented: $showEditor) {
+                if let physician = editingPhysician {
+                    PhysicianEditorView(physician: physician)
                 }
             }
         }
     }
 }
 
-// MARK: - Row (keeps compiler happy)
+struct PhysicianEditorView: View {
 
-private struct PhysicianRow: View {
-    let physician: Physician
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(physician.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unnamed" : physician.name)
-                    .font(.headline)
-
-                let line = detailLine
-                if !line.isEmpty {
-                    Text(line)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer()
-
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.secondary)
-            }
-
-            Menu {
-                Button("Select") { onSelect() }
-                Button("Edit") { onEdit() }
-                Divider()
-                Button("Delete", role: .destructive) { onDelete() }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .imageScale(.large)
-            }
-            .buttonStyle(.plain)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
-    }
-
-    private var detailLine: String {
-        let spec = physician.specialty.trimmingCharacters(in: .whitespacesAndNewlines)
-        let clinic = physician.clinic.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !spec.isEmpty && !clinic.isEmpty { return "\(spec) • \(clinic)" }
-        if !spec.isEmpty { return spec }
-        if !clinic.isEmpty { return clinic }
-        return ""
-    }
-}
-
-// --- Editors (same as before) ---
-
-private struct EditPhysicianView: View {
+    @EnvironmentObject private var physicians: PhysiciansStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var id: UUID
-    @State private var name: String
-    @State private var specialty: String
-    @State private var clinic: String
+    @State private var editablePhysician: Physician
 
-    let onSave: (Physician) -> Void
-
-    init(physician: Physician, onSave: @escaping (Physician) -> Void) {
-        _id = State(initialValue: physician.id)
-        _name = State(initialValue: physician.name)
-        _specialty = State(initialValue: physician.specialty)
-        _clinic = State(initialValue: physician.clinic)
-        self.onSave = onSave
+    init(physician: Physician) {
+        _editablePhysician = State(initialValue: physician)
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Name", text: $name)
-                TextField("Specialty", text: $specialty)
-                TextField("Clinic", text: $clinic)
+                Section("Basic Information") {
+                    TextField("Name", text: $editablePhysician.name)
+                    TextField("Specialty", text: $editablePhysician.specialty)
+                    TextField("Clinic", text: $editablePhysician.clinic)
+                }
+
+                Section("Professional") {
+                    TextField("License Number", text: $editablePhysician.licenseNumber)
+                }
+
+                Section("Contact") {
+                    TextField("Phone", text: $editablePhysician.contactPhone)
+                        .keyboardType(.phonePad)
+                    TextField("Email", text: $editablePhysician.contactEmail)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                }
             }
             .navigationTitle("Edit Physician")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        onSave(Physician(id: id, name: name, specialty: specialty, clinic: clinic))
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
                 }
-            }
-        }
-    }
-}
 
-private struct AddPhysicianView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var name: String = ""
-    @State private var specialty: String = ""
-    @State private var clinic: String = ""
-
-    let onAdd: (Physician) -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("Name", text: $name)
-                TextField("Specialty", text: $specialty)
-                TextField("Clinic", text: $clinic)
-            }
-            .navigationTitle("New Physician")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Add") {
-                        onAdd(Physician(name: name, specialty: specialty, clinic: clinic))
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        physicians.updatePhysician(editablePhysician)
                         dismiss()
                     }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }

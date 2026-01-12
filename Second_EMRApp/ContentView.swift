@@ -1,28 +1,27 @@
+//“BaselineContract"
+
+
 import SwiftUI
+import Combine
 
 struct ContentView: View {
 
-    // MARK: - Environment
     @EnvironmentObject private var store: EMRStore
     @EnvironmentObject private var physicians: PhysiciansStore
 
-    // MARK: - UI State
     @State private var showPhysiciansManager = false
-    @State private var showReferenceCenter = false
-    @State private var showGlobalSearch = false
-
     @State private var confirmDeletePatientID: UUID? = nil
+    @State private var showBackupCenter: Bool = false
 
-    // Sidebar search + filters
+    // Sidebar UI
+    @State private var censusScope: CensusScope = .clinic
     @State private var patientSearchText: String = ""
+
     @State private var filterGender: Gender? = nil
     @State private var filterAgeBand: AgeBand? = nil
     @State private var filterHasNotes: Bool = false
     @State private var filterHasImaging: Bool = false
     @State private var showFilters = false
-    @State private var globalSearchQuery: String = ""
-    
-    @Binding var query: String
 
     var body: some View {
         NavigationSplitView {
@@ -30,115 +29,60 @@ struct ContentView: View {
         } detail: {
             detail
         }
-    }
-
-    // MARK: - Sidebar
-
-    private var sidebar: some View {
-        List(selection: $store.selectedPatientID) {
-
-            Section {
-                AttendingPhysicianCard(onManage: { showPhysiciansManager = true })
-                    .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-            } header: {
-                Text("Treating Physician")
-            }
-
-            // ✅ NEW: Encounter / Clinic card (binds to selected patient)
-            Section {
-                EncounterTypeCard(patient: selectedPatientBinding)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-            } header: {
-                Text("Encounter")
-            }
-
-            // Filters (collapsible)
-            Section(isExpanded: $showFilters) {
-                PatientFilterChips(
-                    gender: $filterGender,
-                    ageBand: $filterAgeBand,
-                    hasNotes: $filterHasNotes,
-                    hasImaging: $filterHasImaging
-                )
-                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-            } header: {
-                Text("Filters")
-            }
-
-            Section("Patients") {
-
-                ForEach(filteredPatientsForSidebar) { p in
-                    VStack(alignment: .leading, spacing: 4) {
-                        highlightText(patientDisplayName(p), query: patientSearchText)
-                            .font(.headline)
-
-                        let secondary = patientSecondaryLine(p)
-                        if !secondary.isEmpty {
-                            highlightText(secondary, query: patientSearchText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .tag(p.id as UUID?)
-                }
-
-                Button { addPatient() } label: {
-                    Label("Add Patient", systemImage: "person.badge.plus")
-                }
-            }
+        .onAppear {
+            syncHeaderContext()
         }
-        .navigationTitle("Neurosurgery EMR")
-        .searchable(
-            text: $patientSearchText,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Search name, MRN, DOB, phone, ID…"
-        )
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-
-                Button { showGlobalSearch = true } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-
-                Button { addPatient() } label: {
-                    Image(systemName: "plus")
-                }
-
-                Button(role: .destructive) {
-                    if let id = store.selectedPatientID { confirmDeletePatientID = id }
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .disabled(store.selectedPatientID == nil)
-            }
+        .onChange(of: physicians.selectedPhysicianID) { _, _ in
+            syncHeaderContext()
         }
-        .sheet(isPresented: $showPhysiciansManager) {
-            PhysiciansManagerView()
+        .onChange(of: censusScope) { _, _ in
+            syncHeaderContext()
+        }
+        // ✅ CRITICAL: when switching patients, clear right-pane selection
+        .onChange(of: store.selectedPatientID) { _, _ in
+            store.selectedNoteID = nil
+            store.selectedAttachmentID = nil
+            store.selectedVitalID = nil
+        }
+        .sheet(isPresented: $showBackupCenter) {
+            BackupCenterView()
+                .environmentObject(store)
                 .environmentObject(physicians)
         }
-        .sheet(isPresented: $showReferenceCenter) {
-            ReferencesCenterView()
-        }
-        .sheet(isPresented: $showGlobalSearch) {
-            GlobalRecordsSearchView(query: $globalSearchQuery)
-                .environmentObject(store)
-        }
-        .alert("Delete patient?", isPresented: Binding(
-            get: { confirmDeletePatientID != nil },
-            set: { if !$0 { confirmDeletePatientID = nil } }
-        )) {
-            Button("Cancel", role: .cancel) { confirmDeletePatientID = nil }
-            Button("Delete", role: .destructive) {
-                if let id = confirmDeletePatientID { deletePatient(id) }
-                confirmDeletePatientID = nil
-            }
-        } message: {
-            Text("This will remove the patient and their data from this device.")
-        }
+    }
+    
+  
+    
+    static func demographicsPrintText(for patient: Patient) -> String {
+        let nameEnglish = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameArabic  = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let name: String = {
+            if !nameEnglish.isEmpty { return nameEnglish }
+            if !nameArabic.isEmpty { return nameArabic }
+            return "Unnamed Patient"
+        }()
+
+        return """
+        Name:  \(name)
+        MRN:  \(patient.mrn)
+        DOB:  \(patient.dob.formatted(date: .abbreviated, time: .omitted))
+        Sex:  \(sexString(from: patient))
+        Phone:  \(patient.phone)
+        """
     }
 
-    // MARK: - Detail
+    private static func sexString(from patient: Patient) -> String {
+        // ✅ UNCOMMENT ONLY ONE LINE that matches EMRModels.swift
 
+        // return patient.gender.rawValue
+        // return patient.sex.rawValue
+        // return patient.gender
+        // return patient.sex
+
+        return ""
+    }
+    
     private var detail: some View {
         Group {
             if let id = store.selectedPatientID,
@@ -146,10 +90,23 @@ struct ContentView: View {
 
                 PatientDetailHost(
                     patient: $store.patients[idx],
-                    patientValueForRecords: store.patients[idx],
-                    onSavePatient: { savePatientEditsAndStartNew(id: id) },
-                    onRequestDelete: { confirmDeletePatientID = id }
+                    onSaveAndNewPatient: {
+                        savePatientEdits(id: id)
+                        addPatient()
+                    },
+                    onRequestDelete: {
+                        confirmDeletePatientID = id
+                    },
+                    onPrintDemographics: {
+                        let text = ContentView.demographicsPrintText(for: store.patients[idx])
+                        EMRPrintHelper.printTextAsPDF(
+                            text,
+                            title: "Patient Demographics",
+                            jobName: "Demographics"
+                        )
+                    }
                 )
+                .environmentObject(store)
 
             } else {
                 ContentUnavailableView("Select a patient", systemImage: "person")
@@ -158,17 +115,149 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Selected patient binding for Encounter card
+    // MARK: - Sidebar
 
-    private var selectedPatientBinding: Binding<Patient>? {
-        guard let id = store.selectedPatientID,
-              let idx = store.patients.firstIndex(where: { $0.id == id }) else {
-            return nil
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+
+            List {
+
+                // 2) Treating Physician
+                Section("Treating Physician") {
+                    AttendingPhysicianCard(onManage: { showPhysiciansManager = true })
+                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                }
+
+                // 3) Clinic / Inpatient
+                Section("Clinic / Inpatient") {
+                    ClinicInpatientCard(scope: $censusScope)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                }
+
+                // 4) Search + Filters
+                Section("Search") {
+                    PatientSearchRow(text: $patientSearchText)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                }
+
+                Section("Filters") {
+                    Button {
+                        showFilters.toggle()
+                    } label: {
+                        Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    }
+                }
+
+                // 5) Patients list (NO missing helper functions)
+                Section("Patients") {
+                    ForEach(filteredPatientsSidebar) { p in
+                        Button {
+                            store.selectedPatientID = p.id
+                        } label: {
+                            patientRowInline(p)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                // 6) Add Patient (keep close to list)
+                Section {
+                    Button { addPatient() } label: {
+                        Label("Add Patient", systemImage: "person.badge.plus")
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+
+            // 7) Backup & Restore at VERY bottom (outside List)
+            Spacer(minLength: 12)
+
+            Button { showBackupCenter = true } label: {
+                Label("Backup & Restore", systemImage: "lock.shield")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal)
+            .padding(.bottom, 12)
         }
-        return $store.patients[idx]
     }
 
-    // MARK: - Patient Filtering + Ranking
+    // MARK: - Sidebar filtering
+
+    private var filteredPatientsSidebar: [Patient] {
+        // Start from non-deleted
+        var base = store.patients.filter { !$0.isDeleted }
+
+        // Optional: filter by clinic/inpatient scope IF you have a field.
+        // If you don't have that field yet, leave this off.
+        // Example if you later add patient.isInpatient Bool:
+        // switch censusScope {
+        // case .clinic:    base = base.filter { !$0.isInpatient }
+        // case .inpatient: base = base.filter { $0.isInpatient }
+        // }
+
+        // Search
+        let q = patientSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !q.isEmpty {
+            let qq = q.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+
+            func norm(_ s: String) -> String {
+                s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            }
+
+            base = base.filter { p in
+                norm(p.nameEnglish).contains(qq) ||
+                norm(p.nameArabic).contains(qq) ||
+                norm(p.mrn).contains(qq) ||
+                norm(p.phone).contains(qq)
+            }
+        }
+
+        // Sort: updated desc (or name)
+        base.sort { $0.updatedAt > $1.updatedAt }
+        return base
+    }
+
+    // MARK: - Inline patient row (replaces missing PatientRow)
+
+    @ViewBuilder
+    private func patientRowInline(_ p: Patient) -> some View {
+        let isSelected = (store.selectedPatientID == p.id)
+
+        VStack(alignment: .leading, spacing: 4) {
+            Text(displayName(p))
+                .font(.headline)
+                .foregroundStyle(isSelected ? .blue : .primary)
+
+            HStack(spacing: 8) {
+                if !p.mrn.isEmpty {
+                    Text("MRN: \(p.mrn)")
+                }
+                if !p.phone.isEmpty {
+                    Text("Phone: \(p.phone)")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isSelected ? Color(.systemGray5) : Color.clear)
+        )
+    }
+
+    private func displayName(_ p: Patient) -> String {
+        let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ar = p.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !en.isEmpty { return en }
+        if !ar.isEmpty { return ar }
+        return "Unnamed patient"
+    }
+    // MARK: - Filtering
 
     private var filteredPatientsForSidebar: [Patient] {
         let q = patientSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -182,7 +271,7 @@ struct ContentView: View {
                 if !band.contains(age) { return false }
             }
             if filterHasNotes {
-                let has = store.notes.contains(where: { $0.patientID == p.id })
+                let has = store.notes.contains(where: { $0.patientID == p.id && !$0.isDeleted })
                 if !has { return false }
             }
             if filterHasImaging {
@@ -192,47 +281,29 @@ struct ContentView: View {
             return true
         }
 
+        // NOTE: censusScope is currently UI-only unless you add a patient flag like `isInpatient`.
+        // When you add it, filter here.
+
         guard !q.isEmpty else {
             return candidates.sorted { patientDisplayName($0) < patientDisplayName($1) }
         }
 
-        return candidates
-            .map { p -> (Patient, Int) in (p, patientMatchScore(p, query: q)) }
-            .filter { $0.1 > 0 }
-            .sorted { a, b in
-                if a.1 != b.1 { return a.1 > b.1 }
-                return patientDisplayName(a.0) < patientDisplayName(b.0)
-            }
-            .map { $0.0 }
+        return candidates.filter { p in
+            let hay = [
+                p.nameEnglish, p.nameArabic, p.mrn, p.phone, p.nationalID, p.passport, p.email,
+                p.dob.formatted(date: .abbreviated, time: .omitted),
+                p.dob.formatted(date: .numeric, time: .omitted),
+                String(p.dob.ISO8601Format().prefix(10))
+            ]
+            .joined(separator: " ")
+            .lowercased()
+
+            return hay.contains(q)
+        }
+        .sorted { patientDisplayName($0) < patientDisplayName($1) }
     }
 
-    private func patientMatchScore(_ p: Patient, query q: String) -> Int {
-        let en = p.nameEnglish.lowercased()
-        let ar = p.nameArabic.lowercased()
-        let mrn = p.mrn.lowercased()
-        let phone = p.phone.lowercased()
-        let nat = p.nationalID.lowercased()
-        let pass = p.passport.lowercased()
-        let email = p.email.lowercased()
-
-        let dob1 = p.dob.formatted(date: .abbreviated, time: .omitted).lowercased()
-        let dob2 = p.dob.formatted(date: .numeric, time: .omitted).lowercased()
-        let dob3 = String(p.dob.ISO8601Format().prefix(10)).lowercased()
-
-        var score = 0
-        if en.contains(q) || ar.contains(q) { score += 100 }
-        if mrn.contains(q) { score += 80 }
-        if dob1.contains(q) || dob2.contains(q) || dob3.contains(q) { score += 60 }
-        if phone.contains(q) { score += 40 }
-        if nat.contains(q) { score += 30 }
-        if pass.contains(q) { score += 25 }
-        if email.contains(q) { score += 15 }
-        if en.hasPrefix(q) || ar.hasPrefix(q) { score += 20 }
-        if mrn.hasPrefix(q) { score += 15 }
-        return score
-    }
-
-    // MARK: - Display helpers
+    // MARK: - Display
 
     private func patientDisplayName(_ p: Patient) -> String {
         let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -248,25 +319,12 @@ struct ContentView: View {
         let mrn = p.mrn.trimmingCharacters(in: .whitespacesAndNewlines)
         if !mrn.isEmpty { parts.append("MRN: \(mrn)") }
 
-        let dob = p.dob.formatted(date: .abbreviated, time: .omitted)
-        parts.append("DOB: \(dob)")
+        parts.append("DOB: \(p.dob.formatted(date: .abbreviated, time: .omitted))")
 
         let phone = p.phone.trimmingCharacters(in: .whitespacesAndNewlines)
         if !phone.isEmpty { parts.append("Phone: \(phone)") }
 
-        // ✅ small hint for clinic patients (optional but useful)
-        if p.encounterType == .clinic, let appt = p.appointmentDate {
-            let t = appt.formatted(date: .omitted, time: .shortened)
-            parts.append("Clinic: \(t)")
-        }
-
         return parts.joined(separator: "  •  ")
-    }
-
-    private func highlightText(_ text: String, query: String) -> Text {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return Text(text) }
-        return text.lowercased().contains(q) ? Text(text).bold() : Text(text)
     }
 
     // MARK: - Actions
@@ -275,8 +333,6 @@ struct ContentView: View {
         var p = Patient()
         p.createdAt = Date()
         p.updatedAt = Date()
-        p.encounterType = .inpatient
-        p.appointmentDate = nil
         store.patients.append(p)
         store.savePatients()
         store.selectedPatientID = p.id
@@ -289,53 +345,79 @@ struct ContentView: View {
         store.selectedPatientID = store.patients.first(where: { !$0.isDeleted })?.id
     }
 
-    /// ✅ New behavior you requested:
-    /// Save demographics -> patient is committed -> immediately start a NEW blank patient
-    private func savePatientEditsAndStartNew(id: UUID) {
+    private func savePatientEdits(id: UUID) {
         guard let idx = store.patients.firstIndex(where: { $0.id == id }) else { return }
         store.patients[idx].updatedAt = Date()
         store.savePatients()
+    }
 
-        // Immediately ready for next entry
-        addPatient()
+    private func syncHeaderContext() {
+        store.treatingPhysicianName = physicians.selectedPhysicianName?.isEmpty == false
+        ? (physicians.selectedPhysicianName ?? "Treating Physician")
+        : "Treating Physician"
+
+        store.clinicName = (censusScope == .clinic) ? "Clinic" : "Inpatient"
     }
 }
 
-// MARK: - Patient detail host (tabs: Demographics / Medical Records)
+// MARK: - Patient detail host
 
-private struct PatientDetailHost: View {
+
+// MARK: - Patient detail host
+
+import SwiftUI
+import Combine
+
+struct PatientDetailHost: View {
+
+    @EnvironmentObject private var store: EMRStore
 
     @Binding var patient: Patient
-    let patientValueForRecords: Patient
 
-    let onSavePatient: () -> Void
+    let onSaveAndNewPatient: () -> Void
     let onRequestDelete: () -> Void
+    let onPrintDemographics: () -> Void
 
     @State private var tab: Int = 0
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 10) {
 
             Picker("", selection: $tab) {
                 Text("Demographics").tag(0)
                 Text("Medical Records").tag(1)
+                Text("Clinic Schedule").tag(2)
+                Text("References").tag(3)
             }
             .pickerStyle(.segmented)
-            .padding()
+            .padding(.horizontal)
 
-            Divider()
+            PatientHeaderCard(patient: patient)
+                .padding(.horizontal)
 
             Group {
-                if tab == 0 {
+                switch tab {
+                case 0:
                     PatientDemographicsView(
                         patient: $patient,
-                        onSave: { onSavePatient() },
-                        onRequestDelete: { onRequestDelete() }
+                        onSaveAndNew: onSaveAndNewPatient,
+                        onRequestDelete: onRequestDelete,
+                        onPrint: onPrintDemographics
                     )
-                } else {
-                    RecordsWorkspaceView(patient: patientValueForRecords)
+
+                case 1:
+                    RecordsWorkspaceView(patient: patient)
+
+                case 2:
+                    ClinicScheduleView(patient: patient)
+
+                default:
+                    ReferencesCenterView()
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openMedicalRecordsTab)) { _ in
+            tab = 1
         }
         .navigationTitle(titleForNavBar)
         .navigationBarTitleDisplayMode(.inline)
@@ -349,118 +431,120 @@ private struct PatientDetailHost: View {
         return "Patient"
     }
 }
+// MARK: - Patient header card (compact demographics)
 
-// MARK: - Encounter Card (Inpatient / Clinic + date + 10AM–10PM slots)
+private struct PatientHeaderCard: View {
+    let patient: Patient
 
-private struct EncounterTypeCard: View {
-    var patient: Binding<Patient>?
+    private var displayName: String {
+        let en = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ar = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !en.isEmpty { return en }
+        if !ar.isEmpty { return ar }
+        return "Unnamed patient"
+    }
 
-    @State private var clinicDay: Date = Date()
+    private var ageYears: Int {
+        let comps = Calendar.current.dateComponents([.year], from: patient.dob, to: Date())
+        return max(0, comps.year ?? 0)
+    }
+
+    private func line(_ label: String, _ value: String) -> String {
+        // UI display with 2 spaces after colon (your preference)
+        "\(label):  \(value)"
+    }
 
     var body: some View {
         GroupBox {
-            if let patient {
-                VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(displayName)
+                    .font(.headline)
 
-                    Picker("Encounter", selection: patient.encounterType) {
-                        ForEach(EncounterType.allCases) { t in
-                            Text(t.rawValue).tag(t)
-                        }
+                HStack(spacing: 10) {
+                    let mrn = patient.mrn.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !mrn.isEmpty {
+                        Text(line("MRN", mrn))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .pickerStyle(.segmented)
 
-                    if patient.wrappedValue.encounterType == .clinic {
-                        // Date (day)
-                        DatePicker("Date", selection: Binding(
-                            get: {
-                                patient.wrappedValue.appointmentDate ?? Date()
-                            },
-                            set: { newDate in
-                                // keep time if already set, else default to 10:00 AM
-                                let base = patient.wrappedValue.appointmentDate ?? defaultClinicTime(on: newDate)
-                                patient.wrappedValue.appointmentDate = combine(day: newDate, timeFrom: base)
-                            }
-                        ), displayedComponents: [.date])
+                    Text(line("DOB", patient.dob.formatted(date: .abbreviated, time: .omitted)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                        // Time slots
-                        Menu {
-                            let day = (patient.wrappedValue.appointmentDate ?? Date())
-                            ForEach(clinicTimeSlots(for: day), id: \.self) { slot in
-                                Button(slot.formatted(date: .omitted, time: .shortened)) {
-                                    let currentDay = patient.wrappedValue.appointmentDate ?? day
-                                    patient.wrappedValue.appointmentDate = combine(day: currentDay, timeFrom: slot)
-                                }
-                            }
-                        } label: {
-                            HStack {
-                                Text("Time")
-                                Spacer()
-                                Text((patient.wrappedValue.appointmentDate ?? defaultClinicTime(on: Date()))
-                                    .formatted(date: .omitted, time: .shortened))
-                                    .foregroundStyle(.secondary)
-                                Image(systemName: "chevron.down")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 2)
+                    Text(line("Age", "\(ageYears)"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                    } else {
-                        // Inpatient: clear appointment
-                        if patient.wrappedValue.appointmentDate != nil {
-                            Text("Clinic appointment cleared.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .onAppear {
-                                    patient.wrappedValue.appointmentDate = nil
-                                }
-                        } else {
-                            Text("Inpatient workflow")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    Spacer()
                 }
-                .padding(.vertical, 4)
-            } else {
-                Text("Select a patient")
-                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    let phone = patient.phone.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !phone.isEmpty {
+                        Text(line("Phone", phone))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(line("Sex", patient.gender.rawValue))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+}
+
+// MARK: - Clinic/Inpatient UI
+
+private enum CensusScope: String, CaseIterable, Identifiable {
+    case clinic = "Clinic"
+    case inpatient = "Inpatient"
+    var id: String { rawValue }
+}
+
+private struct ClinicInpatientCard: View {
+    @Binding var scope: CensusScope
+
+    var body: some View {
+        GroupBox {
+            Picker("", selection: $scope) {
+                ForEach(CensusScope.allCases) { s in
+                    Text(s.rawValue).tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+}
+
+// MARK: - Search row
+
+private struct PatientSearchRow: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField("Search name, MRN, DOB, phone, ID…", text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
         }
-    }
-
-    // ✅ Default clinic time: 10:00 AM
-    private func defaultClinicTime(on day: Date) -> Date {
-        var cal = Calendar.current
-        cal.locale = .current
-        return cal.date(bySettingHour: 10, minute: 0, second: 0, of: day) ?? day
-    }
-
-    // ✅ Combine day + time (keeps same day, replaces hour/minute)
-    private func combine(day: Date, timeFrom: Date) -> Date {
-        let cal = Calendar.current
-        let h = cal.component(.hour, from: timeFrom)
-        let m = cal.component(.minute, from: timeFrom)
-        return cal.date(bySettingHour: h, minute: m, second: 0, of: day) ?? day
-    }
-
-    // ✅ Time slots 10:00 AM → 10:00 PM, every 15 min
-    private func clinicTimeSlots(for day: Date) -> [Date] {
-        var cal = Calendar.current
-        cal.locale = .current
-
-        guard let start = cal.date(bySettingHour: 10, minute: 0, second: 0, of: day),
-              let end = cal.date(bySettingHour: 22, minute: 0, second: 0, of: day) else {
-            return []
-        }
-
-        var slots: [Date] = []
-        var t = start
-        while t <= end {
-            slots.append(t)
-            t = cal.date(byAdding: .minute, value: 15, to: t) ?? t.addingTimeInterval(15 * 60)
-        }
-        return slots
+        .padding(.vertical, 6)
     }
 }
 
@@ -490,7 +574,6 @@ private struct PatientFilterChips: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-
             HStack(spacing: 8) {
                 Menu {
                     Button("Any", role: .cancel) { gender = nil }
@@ -513,22 +596,21 @@ private struct PatientFilterChips: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                Toggle(isOn: $hasNotes) { chipLabel("Has Notes") }
-                    .toggleStyle(.button)
+            Toggle(isOn: $hasNotes) {
+                Text("Has notes")
+            }
 
-                Toggle(isOn: $hasImaging) { chipLabel("Has Imaging") }
-                    .toggleStyle(.button)
+            Toggle(isOn: $hasImaging) {
+                Text("Has imaging")
             }
         }
     }
 
-    private func chipLabel(_ text: String) -> some View {
-        Text(text)
+    private func chipLabel(_ s: String) -> some View {
+        Text(s)
             .font(.caption)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(.thinMaterial)
-            .clipShape(Capsule())
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color(.secondarySystemBackground)))
     }
 }

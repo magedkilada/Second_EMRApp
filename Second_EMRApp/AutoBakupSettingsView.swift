@@ -18,7 +18,7 @@ struct AutoBackupSettingsView: View {
     }
 
     var body: some View {
-        Form {
+        SwiftUI.Form {
             Section("Auto-backup Password (Device Only)") {
                 SecureField("Password", text: $password)
                 SecureField("Confirm", text: $confirm)

@@ -1,22 +1,28 @@
+//
+//  EMRModels.swift
+//  Second_EMRApp
+//
+
 import Foundation
 
-// MARK: - Patient
+// MARK: - Basic Enums
 
-public enum Gender: String, Codable, CaseIterable, Identifiable {
+public enum Gender: String, Codable, CaseIterable, Identifiable, Hashable {
     case male = "Male"
     case female = "Female"
     case other = "Other"
     public var id: String { rawValue }
 }
 
-// ✅ NEW: Encounter type for patient workflow
-public enum EncounterType: String, Codable, CaseIterable, Identifiable {
+// MARK: - Encounter Type
+
+public enum EncounterType: String, Codable, CaseIterable, Identifiable, Hashable {
     case inpatient = "Inpatient"
     case clinic = "Clinic"
     public var id: String { rawValue }
 }
 
-public var treatingPhysicianName: String = ""
+// MARK: - Patient
 
 public struct Patient: Identifiable, Codable, Hashable {
     public var id: UUID = UUID()
@@ -25,32 +31,51 @@ public struct Patient: Identifiable, Codable, Hashable {
     public var nameArabic: String = ""
 
     public var dob: Date = Date()
-    public var gender: Gender = .male
 
-    public var phone: String = ""          // REQUIRED
+    public var mrn: String = ""
+    public var nationalID: String = ""
+    public var passport: String = ""
+
+    public var phone: String = ""
+
+    // ✅ MUST be public + MUST be in CodingKeys to persist
+    public var clinicAppointmentDate: Date? = nil
+
     public var email: String = ""
-
-    public var mrn: String = ""            // digits only (enforced in UI)
-    public var nationalID: String = ""      // digits only (enforced in UI)
-    public var passport: String = ""        // alphanumeric caps (enforced in UI)
-
-    // ✅ NEW
-    public var encounterType: EncounterType = .inpatient
-    /// Used only for clinic patients (date + time)
-    public var appointmentDate: Date? = nil
+    public var gender: Gender = .male
 
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
-
     public var isDeleted: Bool = false
 
-    public init() {}
+    enum CodingKeys: String, CodingKey {
+        case id, nameEnglish, nameArabic, dob, mrn, nationalID, passport, phone
+        case clinicAppointmentDate   // ✅ CRITICAL FIX
+        case email, gender
+        case createdAt, updatedAt, isDeleted
+    }
 }
+    // MARK: - Codable
+    enum CodingKeys: String, CodingKey {
+        case id
+        case nameEnglish
+        case nameArabic
+        case dob
+        case mrn
+        case nationalID
+        case passport
+        case phone
+        case clinicAppointmentDate   // ✅ CRITICAL FIX
+        case email
+        case gender
+        case createdAt
+        case updatedAt
+        case isDeleted
+    }
 
+// MARK: - Notes
 
-// MARK: - Record Types
-
-public enum RecordType: String, Codable, CaseIterable, Identifiable {
+public enum RecordNoteType: String, Codable, CaseIterable, Identifiable, Hashable {
     case hp = "H&P"
     case soap = "SOAP"
     case operative = "Operative"
@@ -61,213 +86,186 @@ public enum RecordType: String, Codable, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
-    // HARD RULE: header is always generated from type
+    /// Hard rule: header is auto-generated from type
     public var headerTitle: String {
         switch self {
         case .hp: return "History & Physical (H&P)"
         case .soap: return "SOAP / Progress Note"
         case .operative: return "Operative Note"
         case .discharge: return "Discharge Summary"
-        case .eeg: return "Electroencephalography (EEG) Report"
+        case .eeg: return "EEG Report"
         case .prescription: return "Prescription"
-        case .blank: return "Clinical Note"
+        case .blank: return "Blank Note"
         }
     }
 
+    /// ✅ Used by AIAssistView and templates list.
+    /// IMPORTANT: per your request, vitals should NOT be baked into templates anymore.
     public var defaultBody: String {
         switch self {
         case .hp:
             return """
-CHIEF COMPLAINT:  
-HISTORY OF PRESENT ILLNESS:  
+\(headerTitle)
 
-PAST MEDICAL HISTORY:  
-PAST SURGICAL HISTORY:  
-MEDICATIONS:  
-ALLERGIES:  
+CHIEF COMPLAINT:
 
-SOCIAL HISTORY:  
-FAMILY HISTORY:  
+HISTORY OF PRESENT ILLNESS:
 
-REVIEW OF SYSTEMS:  
+PAST MEDICAL HISTORY:
 
-PHYSICAL EXAMINATION:  
+PAST SURGICAL HISTORY:
 
-VITALS:
-BP: ____ / ____ mmHg
-HR: ____ bpm
-Temp: ____ °C
-O₂ Sat: ____ %
+MEDICATIONS:
 
-GENERAL:  
-NEUROLOGIC:  
-OTHER SYSTEMS:   
-GENERAL:  
-NEUROLOGIC:  
-OTHER SYSTEMS:  
+ALLERGIES:
 
-ASSESSMENT:  
-PLAN:  
+FAMILY HISTORY:
+
+SOCIAL HISTORY:
+
+REVIEW OF SYSTEMS:
+
+PHYSICAL EXAMINATION:
+
+IMAGING / LABS:
+
+ASSESSMENT:
+
+PLAN:
 """
         case .soap:
             return """
-SUBJECTIVE:  
-OBJECTIVE:  
-    PHYSICAL EXAMINATION:  
+            SOAP / Progress Note
 
-    VITALS:
-    BP: ____ / ____ mmHg
-    HR: ____ bpm
-    Temp: ____ °C
-    O₂ Sat: ____ %
-
-    GENERAL:  
-    NEUROLOGIC:  
-    OTHER SYSTEMS:   
- 
-Labs / Imaging:  
-
-ASSESSMENT:  
-
-
-PLAN:  
--  
-"""
+            SUBJECTIVE:  \n
+            OBJECTIVE:  \n
+            ASSESSMENT:  \n
+            PLAN:  \n
+            """
         case .operative:
             return """
-PREOPERATIVE DIAGNOSIS:  
-POSTOPERATIVE DIAGNOSIS:  
+\(headerTitle)
 
-PROCEDURE:  
-SURGEON:  
-ASSISTANTS:  
-ANESTHESIA:  
+PREOPERATIVE DIAGNOSIS:
 
-INDICATIONS:  
+POSTOPERATIVE DIAGNOSIS:
 
-FINDINGS:  
+PROCEDURE:
 
-DESCRIPTION OF PROCEDURE:  
+SURGEON:
 
-ESTIMATED BLOOD LOSS:  
-COMPLICATIONS:  
-DRAINS:  
-SPECIMENS:  
+ASSISTANT:
 
-DISPOSITION:  
+ANESTHESIA:
+
+POSITION:
+
+FINDINGS:
+
+ESTIMATED BLOOD LOSS:
+
+DRAINS:
+
+COMPLICATIONS:
+
+INDICATIONS:
+
+DESCRIPTION OF PROCEDURE:
 """
         case .discharge:
             return """
-ADMISSION DATE:  
-DISCHARGE DATE:  
+\(headerTitle)
 
-ADMISSION DIAGNOSIS:  
-DISCHARGE DIAGNOSIS:  
+ADMISSION DATE:
 
-HOSPITAL COURSE:  
+DISCHARGE DATE:
 
-PROCEDURES / OPERATIONS:  
-CONSULTS:  
+ADMITTING DIAGNOSIS:
 
-DISCHARGE MEDICATIONS:  
+DISCHARGE DIAGNOSIS:
 
-DISCHARGE INSTRUCTIONS:  
-FOLLOW UP:  
+HOSPITAL COURSE:
+
+PROCEDURES:
+
+DISCHARGE MEDICATIONS:
+
+DISCHARGE INSTRUCTIONS:
+
+FOLLOW UP:
 """
         case .eeg:
             return """
-CLINICAL HISTORY:  
-REASON:  
-HISTORY:  
-NOTES:  
+\(headerTitle)
 
-TECHNICAL DETAILS:
-DURATION:  30 min
-MONTAGE:  10-20 system
-STATE:  Awake/Asleep
-ACTIVATIONS:  Hyperventilation [ ]  Photic stimulation [ ]
+INDICATION:
 
-EEG FINDINGS:
-BACKGROUND:  
-FOCAL:  
-GENERALIZED:  
-SEIZURES:  
+MEDICATIONS:
 
-IMPRESSION:  
+TECHNIQUE:
 
-RECOMMENDATIONS:  
+FINDINGS:
+
+IMPRESSION:
 """
         case .prescription:
             return """
-EPISODE DIAGNOSIS:  
+\(headerTitle)
 
-MEDICATION:  
-DOSE:  
-ROUTE:  
-FREQUENCY:  
-DURATION:  
+DIAGNOSIS:
 
-REFILLS:  
+MEDICATIONS:
 
-INDICATION:  
-SPECIAL INSTRUCTIONS:  
+INSTRUCTIONS:
 """
         case .blank:
             return """
-TITLE:  
-BODY:  
-"""
+        \(headerTitle)
+
+        TITLE:  
+
+        """
         }
     }
 }
 
-// MARK: - Record Note
+/// Backwards compatibility for parts of your UI that still refer to RecordType
+public typealias RecordType = RecordNoteType
 
 public struct RecordNote: Identifiable, Codable, Hashable {
     public var id: UUID = UUID()
     public var patientID: UUID
 
-    public var type: RecordType
-    public var title: String            // used mainly for .blank
-    public var body: String
+    public var type: RecordNoteType = .soap
 
+    /// Some screens set `note.title = ...` (AIWorkspacePane). Keep it optional.
+    public var title: String? = nil
+
+    public var body: String
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
 
     public var isFinalized: Bool = false
-    public var finalizedAt: Date? = nil
+    public var isDeleted: Bool = false
 
-    // Prescription helpers (optional)
-    public var episodeDiagnosis: String = ""
-    public var medicationKey: String = ""
-
-    /// Use this everywhere in UI (sidebar rows, navigation titles, PDFs…)
-    public var displayTitle: String {
-        if type == .blank {
-            return title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Clinical Note" : title
-        } else {
-            return type.headerTitle
-        }
-    }
-
-    public init(patientID: UUID, type: RecordType) {
+    public init(patientID: UUID, type: RecordNoteType, body: String? = nil) {
         self.patientID = patientID
         self.type = type
-        self.body = type.defaultBody
+        self.body = body ?? type.defaultBody
+    }
 
-        if type == .blank {
-            self.title = "Clinical Note"
-        } else {
-            self.title = ""
+    public var displayTitle: String {
+        if let t = title, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return t
         }
+        return type.rawValue
     }
 }
 
 // MARK: - Attachments
 
 public struct Attachment: Identifiable, Codable, Hashable {
-
-    public enum Category: String, Codable, CaseIterable, Identifiable {
+    public enum Category: String, Codable, CaseIterable, Identifiable, Hashable {
         case radiology = "Radiology"
         case laboratory = "Laboratory"
         case specialTest = "Special Test"
@@ -278,19 +276,17 @@ public struct Attachment: Identifiable, Codable, Hashable {
     public var id: UUID = UUID()
     public var patientID: UUID
 
-    public var category: Category
-    public var originalFileName: String
-    public var storedFileName: String
+    public var category: Category = .radiology
+    public var originalFileName: String = ""
+    public var storedFileName: String = ""
     public var importedAt: Date = Date()
+    public var isDeleted: Bool = false
 
-    public init(patientID: UUID,
-                category: Category,
-                originalFileName: String,
-                storedFileName: String) {
+    public init(patientID: UUID, category: Category = .radiology, originalFileName: String = "", storedFileName: String = "") {
         self.patientID = patientID
         self.category = category
         self.originalFileName = originalFileName
         self.storedFileName = storedFileName
-        self.importedAt = Date()
     }
 }
+

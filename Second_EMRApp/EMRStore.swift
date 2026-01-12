@@ -1,220 +1,277 @@
+//
+//  EMRStore.swift
+//  Second_EMRApp
+//
+
 import Foundation
-import SwiftUI
-import Combine  // ← ADD THIS LINE!
-
-// MARK: - Note Type (keep for backward compatibility with old code)
-
-public enum RecordNoteType: String, Codable, CaseIterable, Identifiable {
-    case soap = "SOAP / Progress Note"
-    case hp = "H&P"
-    case operative = "Operative Note"
-    case discharge = "Discharge Summary"
-    case eeg = "EEG Report"
-
-    public var id: String { rawValue }
-
-    public var shortLabel: String {
-        switch self {
-        case .soap: return "SOAP"
-        case .hp: return "H&P"
-        case .operative: return "Op"
-        case .discharge: return "Disch"
-        case .eeg: return "EEG"
-        }
-    }
-}
-
-// MARK: - Store
+import Combine
 
 @MainActor
 public final class EMRStore: ObservableObject {
 
-    // MARK: - Published Properties
-    
-    // Patients
+    // MARK: - Published
+
     @Published public var patients: [Patient] = []
-    @Published public var selectedPatientID: UUID? = nil
-    
-    // Notes
     @Published public var notes: [RecordNote] = []
-    @Published public var selectedNoteID: UUID? = nil
-    
-    // Attachments
     @Published public var attachments: [Attachment] = []
-    
-    // Header info (for printing/display)
-    @Published public var clinicName: String = "Neurosurgery Clinic"
-    @Published public var treatingPhysicianName: String = "Attending Physician"
-    
-    // Track last modification for UI updates
-    @Published public var lastModified: Date = Date()
+    @Published public var vitals: [VitalsEntry] = []
+
+    @Published public var selectedPatientID: UUID? = nil
+    @Published public var selectedNoteID: UUID? = nil
+    @Published public var selectedAttachmentID: UUID? = nil
+    @Published public var selectedVitalID: UUID? = nil
+
+    @Published public var searchText: String = ""
+    @Published public var lastErrorMessage: String? = nil
+
+    // Header info used by NoteEditorView / printing
+    @Published public var treatingPhysicianName: String = "Treating Physician"
+    @Published public var clinicName: String = "Clinic"
+    @Published public var draftNote: RecordNote? = nil
 
     // MARK: - Init
 
     public init() {
-        loadPatients()
-        loadNotes()
-        loadAttachments()
-    }
+        loadAll()
 
-    // MARK: - Patients CRUD
-
-    public func savePatients() {
-        do {
-            let data = try JSONEncoder().encode(patients)
-            UserDefaults.standard.set(data, forKey: "patients_v2")
-        } catch {
-            print("❌ Failed to save patients:", error)
+        if selectedPatientID == nil {
+            selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
         }
     }
 
-    private func loadPatients() {
-        guard let data = UserDefaults.standard.data(forKey: "patients_v2"),
-              let decoded = try? JSONDecoder().decode([Patient].self, from: data) else {
-            patients = []
-            return
-        }
-        patients = decoded
+    // MARK: - Templates
+
+    public func templateText(for type: RecordNoteType) -> String {
+        type.defaultBody
     }
 
-    // MARK: - Notes CRUD
-
-    public func notes(for patientID: UUID) -> [RecordNote] {
-        notes
-            .filter { $0.patientID == patientID && !isPatientDeleted(patientID) }
-            .sorted { $0.updatedAt > $1.updatedAt }
-    }
+    // MARK: - Notes API
 
     public func note(by id: UUID) -> RecordNote? {
-        notes.first(where: { $0.id == id })
+        notes.first(where: { $0.id == id && !$0.isDeleted })
+    }
+    
+    public func makeDraftNote(patientID: UUID, type: RecordNoteType) -> RecordNote {
+        // Not inserted into notes[] until committed
+        RecordNote(patientID: patientID, type: type, body: type.defaultBody)
     }
 
-    public func addNote(for patientID: UUID, type: RecordNoteType) -> UUID {
-        // Convert RecordNoteType to RecordType
-        let recordType: RecordType
-        switch type {
-        case .soap: recordType = .soap
-        case .hp: recordType = .hp
-        case .operative: recordType = .operative
-        case .discharge: recordType = .discharge
-        case .eeg: recordType = .eeg
-        }
-        
-        let new = RecordNote(patientID: patientID, type: recordType)
-        notes.insert(new, at: 0)
-        selectedNoteID = new.id
+    public func commitDraftNote(_ draft: RecordNote) {
+        notes.insert(draft, at: 0)
         saveNotes()
-        return new.id
     }
 
     public func updateNote(_ note: RecordNote) {
-        guard let idx = notes.firstIndex(where: { $0.id == note.id }) else { return }
-        notes[idx] = note
+        if let idx = notes.firstIndex(where: { $0.id == note.id }) {
+            notes[idx] = note
+        } else {
+            notes.insert(note, at: 0)
+        }
+        saveNotes()
+    }
+
+    /// Finalize = read-only. Finalized notes cannot be deleted.
+    public func finalizeNote(_ id: UUID) {
+        guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
+        if notes[idx].isFinalized { return }
+        notes[idx].isFinalized = true
         notes[idx].updatedAt = Date()
         saveNotes()
     }
 
-    public func deleteNote(id: UUID) {
-        notes.removeAll(where: { $0.id == id })
-        if selectedNoteID == id {
-            selectedNoteID = nil
-        }
-        saveNotes()
-    }
-
-    public func saveNotes() {
-        do {
-            let data = try JSONEncoder().encode(notes)
-            UserDefaults.standard.set(data, forKey: "notes_v2")
-            lastModified = Date()
-        } catch {
-            print("❌ Failed to save notes:", error)
-        }
-    }
-
-    private func loadNotes() {
-        guard let data = UserDefaults.standard.data(forKey: "notes_v2"),
-              let decoded = try? JSONDecoder().decode([RecordNote].self, from: data) else {
-            notes = []
-            return
-        }
-        notes = decoded
-    }
-    
-    // NEW: create note directly from RecordType (used by template picker)
-    public func addNote(for patientID: UUID, recordType: RecordType) -> UUID {
-        let new = RecordNote(patientID: patientID, type: recordType)
-        notes.insert(new, at: 0)
-        selectedNoteID = new.id
-        saveNotes()
-        return new.id
-    }
-
-    // NEW: replace an existing note body with a template (only if not finalized)
-    public func replaceNoteBody(noteID: UUID, with recordType: RecordType) {
-        guard let idx = notes.firstIndex(where: { $0.id == noteID }) else { return }
-        guard notes[idx].isFinalized == false else { return }
-        notes[idx].type = recordType
-        notes[idx].title = (recordType == .blank ? "Clinical Note" : "")
-        notes[idx].body = recordType.defaultBody
+    /// Unfinalize (admin/correction) — not exposed by default UI.
+    public func unfinalizeNote(_ id: UUID) {
+        guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
+        if !notes[idx].isFinalized { return }
+        notes[idx].isFinalized = false
         notes[idx].updatedAt = Date()
         saveNotes()
     }
-    
 
-    // MARK: - Attachments CRUD
-
-    public func attachments(for patientID: UUID) -> [Attachment] {
-        attachments
-            .filter { $0.patientID == patientID && !isPatientDeleted(patientID) }
-            .sorted { $0.importedAt > $1.importedAt }
+    public func addNote(patientID: UUID, type: RecordNoteType) -> RecordNote {
+        let n = RecordNote(patientID: patientID, type: type, body: type.defaultBody)
+        notes.insert(n, at: 0)
+        selectedNoteID = n.id
+        saveNotes()
+        return n
     }
 
-    public func saveAttachments() {
-        do {
-            let data = try JSONEncoder().encode(attachments)
-            UserDefaults.standard.set(data, forKey: "attachments_v2")
-            lastModified = Date()
-        } catch {
-            print("❌ Failed to save attachments:", error)
-        }
-    }
+    @MainActor
+    public func deleteNote(_ id: UUID) {
+        guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
 
-    private func loadAttachments() {
-        guard let data = UserDefaults.standard.data(forKey: "attachments_v2"),
-              let decoded = try? JSONDecoder().decode([Attachment].self, from: data) else {
-            attachments = []
+        if notes[idx].isFinalized {
+            lastErrorMessage = "This note is finalized and cannot be deleted."
             return
         }
-        attachments = decoded
+
+        // ✅ Soft delete, but IMPORTANT: reassign array so SwiftUI updates lists
+        var copy = notes
+        copy[idx].isDeleted = true
+        copy[idx].updatedAt = Date()
+        notes = copy
+
+        saveNotes()
+
+        if selectedNoteID == id { selectedNoteID = nil }
     }
 
-    // MARK: - Templates (single source of truth)
+    // MARK: - Vitals API
 
-    public func templateText(for type: RecordNoteType) -> String {
-        let recordType: RecordType
-        switch type {
-        case .soap: recordType = .soap
-        case .hp: recordType = .hp
-        case .operative: recordType = .operative
-        case .discharge: recordType = .discharge
-        case .eeg: recordType = .eeg
+    public func vitals(for patientID: UUID) -> [VitalsEntry] {
+        vitals
+            .filter { $0.patientID == patientID }
+            .sorted { $0.measuredAt > $1.measuredAt }
+    }
+
+    public func addVital(for patientID: UUID) -> UUID {
+        let v = VitalsEntry(patientID: patientID)
+        vitals.insert(v, at: 0)
+        selectedVitalID = v.id
+        saveVitals()
+        return v.id
+    }
+
+    public func updateVital(_ v: VitalsEntry) {
+        if let idx = vitals.firstIndex(where: { $0.id == v.id }) {
+            vitals[idx] = v
+        } else {
+            vitals.insert(v, at: 0)
         }
-        return recordType.defaultBody
+        saveVitals()
     }
 
-    // MARK: - Helpers
-
-    private func isPatientDeleted(_ patientID: UUID) -> Bool {
-        patients.first(where: { $0.id == patientID })?.isDeleted ?? false
+    public func deleteVital(id: UUID) {
+        if let idx = vitals.firstIndex(where: { $0.id == id }) {
+            vitals.remove(at: idx)
+            saveVitals()
+        }
     }
-    // MARK: - Force Persist All (for backup)
+
+    public func latestVital(for patientID: UUID) -> VitalsEntry? {
+        vitals
+            .filter { $0.patientID == patientID }
+            .sorted { $0.measuredAt > $1.measuredAt }
+            .first
+    }
+
+    // MARK: - Persistence (JSON)
+
+    private var documentsURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    }
+
+    private var patientsURL: URL { documentsURL.appendingPathComponent("patients.json") }
+    private var notesURL: URL { documentsURL.appendingPathComponent("notes.json") }
+    private var attachmentsURL: URL { documentsURL.appendingPathComponent("attachments.json") }
+    private var vitalsURL: URL { documentsURL.appendingPathComponent("vitals.json") }
+
+    private func loadAll() {
+        loadPatients()
+        loadNotes()
+        loadAttachments()
+        loadVitals()
+    }
 
     public func forcePersistAll() {
         savePatients()
         saveNotes()
         saveAttachments()
+        saveVitals()
     }
 
-}
+    // MARK: Patients
 
+    public func loadPatients() {
+        patients = load([Patient].self, from: patientsURL) ?? []
+    }
+
+    public func savePatients() {
+        save(patients, to: patientsURL)
+    }
+
+    // MARK: Notes
+
+    public func loadNotes() {
+        notes = load([RecordNote].self, from: notesURL) ?? []
+    }
+
+    public func saveNotes() {
+        save(notes, to: notesURL)
+    }
+
+    // MARK: Attachments
+
+    public func loadAttachments() {
+        attachments = load([Attachment].self, from: attachmentsURL) ?? []
+    }
+
+    public func saveAttachments() {
+        save(attachments, to: attachmentsURL)
+    }
+
+    // MARK: Vitals
+
+    public func loadVitals() {
+        vitals = load([VitalsEntry].self, from: vitalsURL) ?? []
+    }
+
+    public func saveVitals() {
+        save(vitals, to: vitalsURL)
+    }
+
+    // MARK: - Generic helpers
+
+    private func save<T: Encodable>(_ value: T, to url: URL) {
+        do {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted]
+            let data = try enc.encode(value)
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            lastErrorMessage = "Save failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func load<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
+        do {
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            lastErrorMessage = "Load failed: \(error.localizedDescription)"
+            return nil
+        }
+    }
+    // MARK: - Attachments helpers
+
+    public func attachmentsDirectory(for patientID: UUID) -> URL {
+        let base = documentsURL.appendingPathComponent("PatientAttachments", isDirectory: true)
+        let dir = base.appendingPathComponent(patientID.uuidString, isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
+    public func attachmentFileURL(_ attachment: Attachment) -> URL {
+        attachmentsDirectory(for: attachment.patientID).appendingPathComponent(attachment.storedFileName)
+    }
+
+    public func deleteAttachment(_ id: UUID, removeFile: Bool = true) {
+        guard let idx = attachments.firstIndex(where: { $0.id == id }) else { return }
+
+        // Soft delete
+        let a = attachments[idx]
+        attachments[idx].isDeleted = true
+        saveAttachments()
+
+        if selectedAttachmentID == id { selectedAttachmentID = nil }
+
+        // Optional physical delete
+        if removeFile {
+            let url = attachmentFileURL(a)
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}
