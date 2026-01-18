@@ -1,52 +1,71 @@
 import Foundation
-
-// ✅ One place to map YOUR model field names to what the header needs.
-struct HeaderPatientFields {
-    var patientName: String
-    var mrn: String
-    var dob: Date?
-    var sex: String
-    var phone: String
-    var clinic: String
-}
-
-struct HeaderNoteFields {
-    var physician: String
-    var createdAt: Date
-    var updatedAt: Date
-}
+import SwiftUI
 
 struct NoteHeaderBuilder {
 
-    static func formatDate(_ date: Date) -> String {
+    private static func formatDateTime(_ d: Date) -> String {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
-        return f.string(from: date)
+        return f.string(from: d)
     }
 
-    static func headerText(patient: HeaderPatientFields, note: HeaderNoteFields) -> String {
-        var lines: [String] = []
+    private static func formatDOB(_ d: Date?) -> String {
+        guard let d else { return "—" }
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f.string(from: d)
+    }
 
-        // ✅ Order you requested
-        lines.append("Patient: \(patient.patientName)")
-        if !patient.mrn.isEmpty { lines.append("MRN: \(patient.mrn)") }
+    // ✅ Attributed header (lets us BOLD specific lines)
+    static func headerAttributed(
+        createdAt: Date,
+        updatedAt: Date,
 
-        if let dob = patient.dob {
-            let dobF = DateFormatter()
-            dobF.dateStyle = .medium
-            dobF.timeStyle = .none
-            lines.append("DOB: \(dobF.string(from: dob))")
-        } else {
-            lines.append("DOB: —")
+        physicianName: String,
+        clinicName: String,
+        physicianPhone: String,
+
+        patientName: String,
+        mrn: String,
+        dob: Date?,
+        sex: String,
+        patientPhone: String
+    ) -> AttributedString {
+
+        var out = AttributedString()
+
+        func appendLine(_ s: String, bold: Bool = false) {
+            var a = AttributedString(s + "\n")
+            if bold { a.font = .system(.footnote, design: .default).bold() }
+            out += a
         }
 
-        lines.append("Sex: \(patient.sex.isEmpty ? "—" : patient.sex)")
-        lines.append("Clinic: \(patient.clinic.isEmpty ? "—" : patient.clinic)")
-        lines.append("Physician: \(note.physician.isEmpty ? "—" : note.physician)")
-        lines.append("Note created: \(formatDate(note.createdAt))")
-        lines.append("Note updated: \(formatDate(note.updatedAt))")
+        // ✅ Top: created/updated (requested)
+        appendLine("Created: \(formatDateTime(createdAt))")
+        appendLine("Updated: \(formatDateTime(updatedAt))")
+        appendLine("") // blank line
 
-        return lines.joined(separator: "\n")
+        // ✅ Physician / clinic block (BOLD) — order you requested
+        appendLine(physicianName.isEmpty ? "Physician: —" : physicianName, bold: true)
+        appendLine(clinicName.isEmpty ? "Clinic: —" : clinicName, bold: true)
+        if !physicianPhone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            appendLine("Tel: \(physicianPhone)", bold: true)
+        } else {
+            appendLine("Tel: —", bold: true)
+        }
+
+        appendLine("") // blank line
+
+        // ✅ Patient block (BOLD) — demographics EXCLUDING nationalID/passport
+        appendLine(patientName.isEmpty ? "Patient: —" : patientName, bold: true)
+
+        appendLine("MRN: \(mrn.isEmpty ? "—" : mrn)", bold: true)
+        appendLine("DOB: \(formatDOB(dob))", bold: true)
+        appendLine("Sex: \(sex.isEmpty ? "—" : sex)", bold: true)
+        appendLine("Phone: \(patientPhone.isEmpty ? "—" : patientPhone)", bold: true)
+
+        return out
     }
 }

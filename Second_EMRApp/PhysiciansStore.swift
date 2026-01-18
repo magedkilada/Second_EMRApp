@@ -37,8 +37,6 @@ public final class PhysiciansStore: ObservableObject {
     public init() {
         load()
 
-        // ✅ If we have physicians but nothing selected, select the first one
-        // so the physician name shows in the card immediately.
         if selectedPhysicianID == nil {
             selectedPhysicianID = physicians.first?.id
         }
@@ -77,13 +75,11 @@ public final class PhysiciansStore: ObservableObject {
                 physicians = []
             }
 
-            // Load selected ID (even if file missing; we validate below)
             if let idString = UserDefaults.standard.string(forKey: "selectedPhysicianID"),
                let id = UUID(uuidString: idString) {
                 selectedPhysicianID = id
             }
 
-            // ✅ Validate selection still exists; otherwise fall back to first physician.
             if let sel = selectedPhysicianID,
                physicians.contains(where: { $0.id == sel }) == false {
                 selectedPhysicianID = physicians.first?.id
@@ -102,8 +98,11 @@ public final class PhysiciansStore: ObservableObject {
     }
 
     public func updatePhysician(_ physician: Physician) {
-        if let idx = physicians.firstIndex(where: { $0.id == physician.id }) {
-            physicians[idx] = physician
+        var p = physician
+        p.updatedAt = Date()
+
+        if let idx = physicians.firstIndex(where: { $0.id == p.id }) {
+            physicians[idx] = p
             save()
         }
     }
@@ -112,7 +111,7 @@ public final class PhysiciansStore: ObservableObject {
         if let idx = physicians.firstIndex(where: { $0.id == id }) {
             physicians.remove(at: idx)
             if selectedPhysicianID == id {
-                selectedPhysicianID = nil
+                selectedPhysicianID = physicians.first?.id
             }
             save()
         }

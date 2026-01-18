@@ -391,3 +391,96 @@ import Foundation
 extension Notification.Name {
     static let openMedicalRecordsTab = Notification.Name("openMedicalRecordsTab")
 }
+import SwiftUI
+
+#if canImport(UIKit)
+import UIKit
+import QuickLook
+
+// MARK: - Share Sheet
+
+public struct ShareSheet: UIViewControllerRepresentable {
+    public let items: [Any]
+
+    public init(items: [Any]) { self.items = items }
+
+    public func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    public func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - QuickLook Preview (single file)
+
+import SwiftUI
+import QuickLook
+
+struct QuickLookPreview: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let vc = QLPreviewController()
+        vc.dataSource = context.coordinator
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {
+        context.coordinator.url = url
+        uiViewController.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+
+        init(url: URL) {
+            self.url = url
+        }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+        func previewController(_ controller: QLPreviewController,
+                               previewItemAt index: Int) -> QLPreviewItem {
+            url as NSURL
+        }
+    }
+}
+
+// MARK: - Print Helper
+
+public enum PrintHelper {
+    public static func printURL(_ url: URL) {
+        let pc = UIPrintInteractionController.shared
+        let info = UIPrintInfo(dictionary: nil)
+        info.outputType = .general
+        info.jobName = url.lastPathComponent
+        pc.printInfo = info
+        pc.printingItem = url
+        pc.present(animated: true, completionHandler: nil)
+    }
+}
+// MARK: - Backup Payload
+
+struct BackupPayload: Codable {
+    let createdAt: Date
+    let patients: [Patient]
+    let notes: [RecordNote]
+    let attachments: [Attachment]
+
+    init(
+        patients: [Patient],
+        notes: [RecordNote],
+        attachments: [Attachment]
+    ) {
+        self.createdAt = Date()
+        self.patients = patients
+        self.notes = notes
+        self.attachments = attachments
+    }
+}
+
+#endif

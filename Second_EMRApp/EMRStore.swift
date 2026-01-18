@@ -5,9 +5,13 @@
 
 import Foundation
 import Combine
+import UniformTypeIdentifiers
+import PhotosUI
 
 @MainActor
 public final class EMRStore: ObservableObject {
+    
+    
 
     // MARK: - Published
 
@@ -28,12 +32,13 @@ public final class EMRStore: ObservableObject {
     @Published public var treatingPhysicianName: String = "Treating Physician"
     @Published public var clinicName: String = "Clinic"
     @Published public var draftNote: RecordNote? = nil
-
+    @Published public var treatingPhysicianPhone: String = ""
+    
+    
     // MARK: - Init
 
     public init() {
         loadAll()
-
         if selectedPatientID == nil {
             selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
         }
@@ -50,9 +55,8 @@ public final class EMRStore: ObservableObject {
     public func note(by id: UUID) -> RecordNote? {
         notes.first(where: { $0.id == id && !$0.isDeleted })
     }
-    
+
     public func makeDraftNote(patientID: UUID, type: RecordNoteType) -> RecordNote {
-        // Not inserted into notes[] until committed
         RecordNote(patientID: patientID, type: type, body: type.defaultBody)
     }
 
@@ -70,6 +74,14 @@ public final class EMRStore: ObservableObject {
         saveNotes()
     }
 
+    public func addNote(patientID: UUID, type: RecordNoteType) -> RecordNote {
+        let n = RecordNote(patientID: patientID, type: type, body: type.defaultBody)
+        notes.insert(n, at: 0)
+        selectedNoteID = n.id
+        saveNotes()
+        return n
+    }
+
     /// Finalize = read-only. Finalized notes cannot be deleted.
     public func finalizeNote(_ id: UUID) {
         guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
@@ -79,7 +91,6 @@ public final class EMRStore: ObservableObject {
         saveNotes()
     }
 
-    /// Unfinalize (admin/correction) — not exposed by default UI.
     public func unfinalizeNote(_ id: UUID) {
         guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
         if !notes[idx].isFinalized { return }
@@ -88,15 +99,6 @@ public final class EMRStore: ObservableObject {
         saveNotes()
     }
 
-    public func addNote(patientID: UUID, type: RecordNoteType) -> RecordNote {
-        let n = RecordNote(patientID: patientID, type: type, body: type.defaultBody)
-        notes.insert(n, at: 0)
-        selectedNoteID = n.id
-        saveNotes()
-        return n
-    }
-
-    @MainActor
     public func deleteNote(_ id: UUID) {
         guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
 
@@ -105,14 +107,19 @@ public final class EMRStore: ObservableObject {
             return
         }
 
-        // ✅ Soft delete, but IMPORTANT: reassign array so SwiftUI updates lists
         var copy = notes
         copy[idx].isDeleted = true
         copy[idx].updatedAt = Date()
         notes = copy
 
         saveNotes()
+        if selectedNoteID == id { selectedNoteID = nil }
+    }
 
+    public func softDeleteNote(_ id: UUID) {
+        guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[idx].isDeleted = true
+        saveNotes()
         if selectedNoteID == id { selectedNoteID = nil }
     }
 
@@ -153,6 +160,115 @@ public final class EMRStore: ObservableObject {
             .filter { $0.patientID == patientID }
             .sorted { $0.measuredAt > $1.measuredAt }
             .first
+    }
+
+    // MARK: - Attachments API
+
+    /// Returns the on-disk file URL for an attachment (in Attachments/<patientID>/storedFileName)
+    public func attachmentFileURL(_ attachment: Attachment) -> URL {
+        attachmentsDirectory(for: attachment.patientID)
+            .appendingPathComponent(attachment.storedFileName)
+    }
+
+    /// Soft delete (hide from list). Optionally also removes the physical file.
+    public func deleteAttachment(_ id: UUID, removeFile: Bool = false) {
+        guard let idx = attachments.firstIndex(where: { $0.id == id }) else { return }
+
+        let a = attachments[idx]
+        attachments[idx].isDeleted = true
+        saveAttachments()
+
+        if selectedAttachmentID == id { selectedAttachmentID = nil }
+
+        if removeFile, !a.storedFileName.isEmpty {
+            try? FileManager.default.removeItem(at: attachmentFileURL(a))
+        }
+    }
+
+    /// Hard delete = remove file + remove row
+    public func hardDeleteAttachment(_ id: UUID) {
+        guard let idx = attachments.firstIndex(where: { $0.id == id }) else { return }
+        let a = attachments[idx]
+
+        if !a.storedFileName.isEmpty {
+            try? FileManager.default.removeItem(at: attachmentFileURL(a))
+        }
+
+        attachments.remove(at: idx)
+        saveAttachments()
+
+        if selectedAttachmentID == id { selectedAttachmentID = nil }
+    }
+
+    // MARK: - Attachment Import (Files / Photos)
+
+    /// Import from Files (URL). Copies into Attachments/<patientID>/UUID.ext and saves metadata.
+    public func importAttachment(from url: URL, patientID: UUID, category: Attachment.Category) {
+        do {
+            let fm = FileManager.default
+
+            // Ensure per-patient folder exists
+            let destDir = attachmentsDirectory(for: patientID)
+
+            // Best-effort original name
+            let originalName = (try? url.resourceValues(forKeys: [.nameKey]).name) ?? url.lastPathComponent
+
+            // Choose extension
+            let ext = url.pathExtension.isEmpty ? (URL(fileURLWithPath: originalName).pathExtension) : url.pathExtension
+            let safeExt = ext.isEmpty ? "dat" : ext.lowercased()
+
+            // Store as UUID filename to avoid collisions
+            let storedFileName = "\(UUID().uuidString).\(safeExt)"
+            let destURL = destDir.appendingPathComponent(storedFileName)
+
+            // Security-scoped resource handling (Files app)
+            let needsSecurity = url.startAccessingSecurityScopedResource()
+            defer { if needsSecurity { url.stopAccessingSecurityScopedResource() } }
+
+            // Copy
+            if fm.fileExists(atPath: destURL.path) {
+                try fm.removeItem(at: destURL)
+            }
+            try fm.copyItem(at: url, to: destURL)
+
+            // ✅ Create model using YOUR initializer
+            let a = Attachment(
+                patientID: patientID,
+                category: category,
+                originalFileName: originalName,
+                storedFileName: storedFileName
+            )
+
+            attachments.insert(a, at: 0)
+            saveAttachments()
+
+        } catch {
+            lastErrorMessage = "Attachment import failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Import photo data (from PhotosPicker).
+    public func importPhotoData(_ data: Data, patientID: UUID, category: Attachment.Category, fileExtension: String = "jpg") {
+        do {
+            let ext = fileExtension.isEmpty ? "jpg" : fileExtension.lowercased()
+            let storedFileName = "\(UUID().uuidString).\(ext)"
+
+            let destURL = attachmentsDirectory(for: patientID).appendingPathComponent(storedFileName)
+            try data.write(to: destURL, options: [.atomic])
+
+            let a = Attachment(
+                patientID: patientID,
+                category: category,
+                originalFileName: "Photo.\(ext)",
+                storedFileName: storedFileName
+            )
+
+            attachments.insert(a, at: 0)
+            saveAttachments()
+
+        } catch {
+            lastErrorMessage = "Photo import failed: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Persistence (JSON)
@@ -243,35 +359,24 @@ public final class EMRStore: ObservableObject {
             return nil
         }
     }
-    // MARK: - Attachments helpers
 
+    // MARK: - Attachments helpers (disk paths)
+
+    private func documentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    }
+
+    /// Root: Documents/Attachments
     public func attachmentsDirectory(for patientID: UUID) -> URL {
-        let base = documentsURL.appendingPathComponent("PatientAttachments", isDirectory: true)
-        let dir = base.appendingPathComponent(patientID.uuidString, isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let base = docs.appendingPathComponent("Attachments", isDirectory: true)
+        let patientDir = base.appendingPathComponent(patientID.uuidString, isDirectory: true)
+
+        if !fm.fileExists(atPath: patientDir.path) {
+            try? fm.createDirectory(at: patientDir, withIntermediateDirectories: true, attributes: nil)
         }
-        return dir
+
+        return patientDir
     }
-
-    public func attachmentFileURL(_ attachment: Attachment) -> URL {
-        attachmentsDirectory(for: attachment.patientID).appendingPathComponent(attachment.storedFileName)
     }
-
-    public func deleteAttachment(_ id: UUID, removeFile: Bool = true) {
-        guard let idx = attachments.firstIndex(where: { $0.id == id }) else { return }
-
-        // Soft delete
-        let a = attachments[idx]
-        attachments[idx].isDeleted = true
-        saveAttachments()
-
-        if selectedAttachmentID == id { selectedAttachmentID = nil }
-
-        // Optional physical delete
-        if removeFile {
-            let url = attachmentFileURL(a)
-            try? FileManager.default.removeItem(at: url)
-        }
-    }
-}

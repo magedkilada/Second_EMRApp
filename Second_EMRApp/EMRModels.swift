@@ -54,6 +54,15 @@ public struct Patient: Identifiable, Codable, Hashable {
         case email, gender
         case createdAt, updatedAt, isDeleted
     }
+    public var displayName: String {
+        let en = nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !en.isEmpty { return en }
+
+        let ar = nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !ar.isEmpty { return ar }
+
+        return "Unnamed Patient"
+    }
 }
     // MARK: - Codable
     enum CodingKeys: String, CodingKey {

@@ -10,20 +10,25 @@
 import SwiftUI
 
 struct BatchPrintView: View {
-
+    
     let patient: Patient
-
+    
     @EnvironmentObject private var store: EMRStore
     @Environment(\.dismiss) private var dismiss
-
+    
     @State private var selectedNoteIDs: Set<UUID> = []
-
+    
     private var patientNotes: [RecordNote] {
         store.notes
             .filter { $0.patientID == patient.id && !$0.isDeleted }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
-
+    
+    private func normalizeForPrint(_ s: String) -> String {
+        let t = s.replacingOccurrences(of: "\r\n", with: "\n")
+        return t.replacingOccurrences(of: "\n{2,}", with: "\n", options: .regularExpression)
+    }
+    
     var body: some View {
         NavigationStack {
             List {
@@ -35,9 +40,9 @@ struct BatchPrintView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-
+                        
                         Spacer()
-
+                        
                         Image(systemName: selectedNoteIDs.contains(note.id) ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(selectedNoteIDs.contains(note.id) ? .blue : .secondary)
                     }
@@ -51,7 +56,7 @@ struct BatchPrintView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-
+                
                 ToolbarItem(placement: .primaryAction) {
                     Button("Print \(selectedNoteIDs.count)") {
                         printSelectedAndDismiss()
@@ -61,72 +66,77 @@ struct BatchPrintView: View {
             }
         }
     }
-
+    
     private func toggle(_ id: UUID) {
         if selectedNoteIDs.contains(id) { selectedNoteIDs.remove(id) }
         else { selectedNoteIDs.insert(id) }
     }
-
+    
     // MARK: - Header (baseline truth)
     private func headerBlock() -> String {
         var lines: [String] = []
-
+        
         let physician = store.treatingPhysicianName.trimmingCharacters(in: .whitespacesAndNewlines)
         let clinic = store.clinicName.trimmingCharacters(in: .whitespacesAndNewlines)
-
+        let physicianPhone = store.treatingPhysicianPhone.trimmingCharacters(in: .whitespacesAndNewlines)
+        
         if !physician.isEmpty { lines.append(physician) }
         if !clinic.isEmpty { lines.append(clinic) }
-
+        if !physicianPhone.isEmpty { lines.append(physicianPhone) }
+        
         lines.append("")
-
+        
         // Patient demographics (EXCLUDE passport + national ID)
         lines.append("Patient: \(patientDisplayName())")
-
+        
         let mrn = patient.mrn.trimmingCharacters(in: .whitespacesAndNewlines)
         if !mrn.isEmpty { lines.append("MRN: \(mrn)") }
-
+        
         let dob = patient.dob.formatted(date: .abbreviated, time: .omitted)
         lines.append("DOB: \(dob)")
-
-        let phone = patient.phone.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !phone.isEmpty { lines.append("Phone: \(phone)") }
-
+        
+        let patientPhone = patient.phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !patientPhone.isEmpty { lines.append("Phone: \(patientPhone)") }
+        
         lines.append("Sex: \(patient.gender.rawValue)")
-
+        
         lines.append("")
         lines.append(String(repeating: "=", count: 60))
         lines.append("")
-
+        
         return lines.joined(separator: "\n")
     }
-
+    
     private func patientDisplayName() -> String {
         let en = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
         let ar = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
         return !en.isEmpty ? en : (!ar.isEmpty ? ar : "Unnamed patient")
     }
-
+    
     // MARK: - Print
     private func printSelectedAndDismiss() {
+        
         let notesToPrint = patientNotes
             .filter { selectedNoteIDs.contains($0.id) }
             .sorted { $0.updatedAt < $1.updatedAt } // older → newer
-
+        
         var combinedText = headerBlock()
-
+        
         for (index, note) in notesToPrint.enumerated() {
             if index > 0 {
                 combinedText += "\n\n" + String(repeating: "=", count: 60) + "\n\n"
             }
-
+            
+            // ✅ Only ONE heading line (no duplicates)
             combinedText += "\(note.displayTitle)\n"
-            combinedText += "\(note.type.rawValue)\n"
             combinedText += "Updated: \(note.updatedAt.formatted(date: .abbreviated, time: .shortened))\n\n"
-            combinedText += note.body
+            
+            // ✅ Normalize to avoid double blank lines in print
+            combinedText += normalizeForPrint(note.body)
         }
-
+        
         EMRPrintHelper.printTextAsPDF(
-            combinedText,
+            combinedText,                      // ✅ batch uses combinedText, NOT exportText()
             title: "Batch Medical Records",
             jobName: "Batch Medical Records"
         ) {
@@ -134,3 +144,4 @@ struct BatchPrintView: View {
         }
     }
 }
+

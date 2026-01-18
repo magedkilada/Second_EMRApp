@@ -52,59 +52,6 @@ struct EMRShareSheetView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
 }
 
-// MARK: - Print helpers
-
-enum EMRPrintHelper {
-
-    static func printFile(_ url: URL, jobName: String, onPresented: (() -> Void)? = nil) {
-        DispatchQueue.main.async {
-            let controller = UIPrintInteractionController.shared
-            let info = UIPrintInfo(dictionary: nil)
-            info.outputType = .general
-            info.jobName = jobName
-
-            controller.printInfo = info
-            controller.printingItem = url
-
-            guard let topVC = UIApplication.shared.emrTopMostViewController,
-                  let anchorView = topVC.view
-            else {
-                controller.present(animated: true) { _, _, _ in onPresented?() }
-                return
-            }
-
-            let rect = CGRect(
-                x: anchorView.bounds.midX,
-                y: anchorView.bounds.maxY - 80,
-                width: 1,
-                height: 1
-            )
-
-            controller.present(from: rect, in: anchorView, animated: true) { _, _, _ in
-                onPresented?()
-            }
-        }
-    }
-
-    static func printTextAsPDF(_ text: String, title: String, jobName: String, onPresented: (() -> Void)? = nil) {
-        guard let pdfURL = EMRSharePrintBuilder.makePDFFile(
-            filename: safeFilename(jobName),
-            title: title,
-            body: text
-        ) else { return }
-
-        printFile(pdfURL, jobName: jobName, onPresented: onPresented)
-    }
-
-    private static func safeFilename(_ s: String) -> String {
-        let allowed = s.map { ch -> Character in
-            if ch.isLetter || ch.isNumber { return ch }
-            return "_"
-        }
-        return String(allowed.prefix(50))
-    }
-}
-
 // MARK: - Builders
 
 enum EMRSharePrintBuilder {
