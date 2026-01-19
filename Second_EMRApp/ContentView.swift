@@ -128,9 +128,7 @@ struct ContentView: View {
                                     set: { store.patients[idx] = $0 }
                                 ),
                                 onSave: {
-                                    store.lastModified = Date()
-                                    // If you have a savePatient() method, call it here.
-                                    // store.savePatient(store.patients[idx])
+                                    store.savePatient(store.patients[idx])   // <-- this calls savePatients() internally
                                 },
                                 onRequestDelete: {
                                     confirmDeletePatientID = store.patients[idx].id
@@ -157,34 +155,24 @@ struct ContentView: View {
     // MARK: - Actions
 
     private func addPatient() {
-        // Create the simplest patient your model allows.
-        // If your Patient has a different initializer, adjust here.
-
-        var p = Patient()
-        // If your Patient() init doesn’t exist, replace with your real init.
-        // Example:
-        // var p = Patient(nameEnglish: "", nameArabic: "", gender: .male, dob: Date(), mrn: "", nationalID: "", passport: "", phone: "")
-
-        store.patients.append(p)
+        let p = store.addNewPatient()      // <-- this calls savePatients() internally
         store.selectedPatientID = p.id
-        store.lastModified = Date()
     }
-
     private func deletePatient(_ id: UUID) {
-        store.patients.removeAll(where: { $0.id == id })
+        store.softDeletePatient(id)   // (no label if your method is softDeletePatient(_ id:))
         if store.selectedPatientID == id {
-            store.selectedPatientID = store.patients.first?.id
+            store.selectedPatientID = store.patients.first(where: { !$0.isDeleted })?.id
         }
-        store.lastModified = Date()
     }
 
-    // MARK: - Display
-
-    private func patientDisplayName(_ p: Patient) -> String {
-        let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !en.isEmpty { return en }
-        let ar = p.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !ar.isEmpty { return ar }
-        return "Patient"
+        
+        // MARK: - Display
+        
+        private func patientDisplayName(_ p: Patient) -> String {
+            let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !en.isEmpty { return en }
+            let ar = p.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !ar.isEmpty { return ar }
+            return "Patient"
+        }
     }
-}

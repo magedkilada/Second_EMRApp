@@ -27,7 +27,9 @@ final class EMRStore: ObservableObject {
     init() {
         loadAll()
 
-        // Default selection (first non-deleted patient)
+        print("🧠 Patients loaded from disk:", patients.count)
+        print("🧠 Patient IDs:", patients.map { "\($0.id) deleted=\($0.isDeleted)" })
+
         if selectedPatientID == nil {
             selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
         }
@@ -125,8 +127,16 @@ final class EMRStore: ObservableObject {
     }
 
     private func savePatients() {
-        save(patients, to: patientsURL)
-        maybeAutoBackup()
+        do {
+            let data = try JSONEncoder().encode(patients)
+            try data.write(to: patientsURL, options: [.atomic])
+
+            print("✅ savePatients wrote:", patients.count, "patients")
+            print("📁 patients.json path:", patientsURL.path)
+
+        } catch {
+            print("❌ Save patients failed:", error)
+        }
     }
 
     private func saveNotes() {
@@ -159,6 +169,8 @@ final class EMRStore: ObservableObject {
     private var patientsURL: URL { documentsURL.appendingPathComponent("patients.json") }
     private var notesURL: URL { documentsURL.appendingPathComponent("notes.json") }
     private var attachmentsURL: URL { documentsURL.appendingPathComponent("attachments.json") }
+    
+    
 
     // MARK: - JSON helpers
 

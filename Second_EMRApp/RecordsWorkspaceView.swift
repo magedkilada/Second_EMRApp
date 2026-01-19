@@ -46,8 +46,14 @@ struct RecordsWorkspaceView: View {
     @State private var errorMessage: String?
 
     // MARK: - QuickLook
-    @State private var previewURL: URL?
-    @State private var showPreview = false
+    // MARK: - QuickLook
+    @State private var previewItem: PreviewItem? = nil
+
+    private struct PreviewItem: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+
 
     // MARK: - Body
     var body: some View {
@@ -63,7 +69,7 @@ struct RecordsWorkspaceView: View {
         // File import
         .fileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: [.item],
+            allowedContentTypes: [.data, .content, .item],
             allowsMultipleSelection: false
         ) { result in
             do {
@@ -98,14 +104,9 @@ struct RecordsWorkspaceView: View {
         }
 
         // Preview sheet
-        .sheet(isPresented: $showPreview) {
-            if let url = previewURL {
-                QuickLookPreview(url: url)
-            } else {
-                Text("No preview.")
-                    .foregroundStyle(.secondary)
-                    .padding()
-            }
+        // Preview sheet (opens ONLY when we have a URL)
+        .sheet(item: $previewItem) { item in
+            QuickLookPreview(url: item.url)
         }
     }
 
@@ -283,8 +284,7 @@ struct RecordsWorkspaceView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     Button {
-                        previewURL = url
-                        showPreview = true
+                        previewItem = PreviewItem(url: url)
                     } label: {
                         Label("Open Preview", systemImage: "doc.text.magnifyingglass")
                     }
@@ -523,9 +523,16 @@ struct RecordsWorkspaceView: View {
         let stored = "\(UUID().uuidString)" + (ext.isEmpty ? "" : ".\(ext)")
         let dest = dir.appendingPathComponent(stored)
 
+        // ✅ IMPORTANT: Files app gives security-scoped URLs
+        let didStart = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStart { url.stopAccessingSecurityScopedResource() }
+        }
+
         // Copy in (overwrite if exists)
         if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
         try fm.copyItem(at: url, to: dest)
+
         return dest
     }
 
@@ -547,32 +554,4 @@ struct RecordsWorkspaceView: View {
     }
 }
 
-// MARK: - QuickLook
 
-private struct QuickLookPreview: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context: Context) -> QLPreviewController {
-        let vc = QLPreviewController()
-        vc.dataSource = context.coordinator
-        return vc
-    }
-
-    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(url: url)
-    }
-
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        let url: URL
-        init(url: URL) { self.url = url }
-
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-
-        func previewController(_ controller: QLPreviewController,
-                               previewItemAt index: Int) -> QLPreviewItem {
-            url as NSURL
-        }
-    }
-}
