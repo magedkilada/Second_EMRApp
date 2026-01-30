@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 
@@ -40,3 +41,4 @@ enum PrintShareHelper {
         top.present(vc, animated: true)
     }
 }
+#endif

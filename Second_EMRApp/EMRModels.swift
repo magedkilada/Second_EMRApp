@@ -11,26 +11,44 @@ public enum Gender: String, Codable, CaseIterable, Identifiable {
 
 public struct Patient: Identifiable, Codable, Hashable {
     public var id: UUID = UUID()
-
     public var nameEnglish: String = ""
     public var nameArabic: String = ""
-
     public var dob: Date = Date()
     public var gender: Gender = .male
 
-    public var phone: String = ""          // REQUIRED
+    public var phone: String = ""
     public var email: String = ""
 
-    public var mrn: String = ""            // digits only (enforced in UI)
-    public var nationalID: String = ""      // digits only (enforced in UI)
-    public var passport: String = ""        // alphanumeric caps (enforced in UI)
+    public var mrn: String = ""
+    public var nationalID: String = ""
+    public var passport: String = ""
 
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
 
     public var isDeleted: Bool = false
 
-    public init() {}
+    public init() { }
+
+    public var ageString: String? {
+        let calendar = Calendar.current
+        let now = Date()
+        let components = calendar.dateComponents([.year, .month], from: dob, to: now)
+        
+        guard let years = components.year, let months = components.month else {
+            return nil
+        }
+        
+        if years > 0 {
+            if months > 0 {
+                return "\(years)y \(months)m"
+            } else {
+                return "\(years)y"
+            }
+        } else {
+            return "\(months)m"
+        }
+    }
 }
 
 // MARK: - Record Types
@@ -42,11 +60,10 @@ public enum RecordType: String, Codable, CaseIterable, Identifiable {
     case discharge = "Discharge"
     case eeg = "EEG"
     case prescription = "Prescription"
-    case blank = "Blank"
+    case blank = "Clinical Note" // Adjusted for consistency
 
     public var id: String { rawValue }
 
-    // HARD RULE: header is always generated from type
     public var headerTitle: String {
         switch self {
         case .hp: return "History & Physical (H&P)"
@@ -59,225 +76,188 @@ public enum RecordType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    // ✅ FIXED: NO MANUAL VITALS - Smart Vitals button inserts automatically
     public var defaultBody: String {
         switch self {
         case .hp:
             return """
-CHIEF COMPLAINT:  
-HISTORY OF PRESENT ILLNESS:  
+            CHIEF COMPLAINT:  
+            HISTORY OF PRESENT ILLNESS:
 
-PAST MEDICAL HISTORY:  
-PAST SURGICAL HISTORY:  
-MEDICATIONS:  
-ALLERGIES:  
+            PAST MEDICAL HISTORY:  
+            PAST SURGICAL HISTORY:  
+            MEDICATIONS:  
+            ALLERGIES:
 
-SOCIAL HISTORY:  
-FAMILY HISTORY:  
+            SOCIAL HISTORY:  
+            FAMILY HISTORY:
 
-REVIEW OF SYSTEMS:  
+            REVIEW OF SYSTEMS:
 
-PHYSICAL EXAMINATION:  
-PHYSICAL EXAMINATION:  
+            PHYSICAL EXAMINATION:
 
-VITALS:
-BP: ____ / ____ mmHg
-HR: ____ bpm
-Temp: ____ °C
-O₂ Sat: ____ %
+            GENERAL:  
+            NEUROLOGIC:  
+            OTHER SYSTEMS:
 
-GENERAL:  
-NEUROLOGIC:  
-OTHER SYSTEMS:   
-GENERAL:  
-NEUROLOGIC:  
-OTHER SYSTEMS:  
-
-ASSESSMENT:  
-PLAN:  
-"""
+            ASSESSMENT:  
+            PLAN:
+            """
         case .soap:
             return """
-SUBJECTIVE:  
-OBJECTIVE:  
-PHYSICAL EXAMINATION:  
+            SUBJECTIVE:  
+            OBJECTIVE:  
+            PHYSICAL EXAMINATION:
 
-VITALS:
-BP: ____ / ____ mmHg
-HR: ____ bpm
-Temp: ____ °C
-O₂ Sat: ____ %
+            GENERAL:  
+            NEUROLOGIC:  
+            OTHER SYSTEMS:  
+            Labs / Imaging:
 
-GENERAL:  
-NEUROLOGIC:  
-OTHER SYSTEMS:   
-Exam:  
-Labs / Imaging:  
+            ASSESSMENT:  
+            1)  
+            2)
 
-ASSESSMENT:  
-1)  
-2)  
-
-PLAN:  
--  
-"""
+            PLAN:
+            """
         case .operative:
             return """
-PREOPERATIVE DIAGNOSIS:  
-POSTOPERATIVE DIAGNOSIS:  
+            PREOPERATIVE DIAGNOSIS:  
+            POSTOPERATIVE DIAGNOSIS:
 
-PROCEDURE:  
-SURGEON:  
-ASSISTANTS:  
-ANESTHESIA:  
+            PROCEDURE:  
+            SURGEON:  
+            ASSISTANTS:  
+            ANESTHESIA:
 
-INDICATIONS:  
+            INDICATIONS:
 
-FINDINGS:  
+            FINDINGS:
 
-DESCRIPTION OF PROCEDURE:  
+            DESCRIPTION OF PROCEDURE:
 
-ESTIMATED BLOOD LOSS:  
-COMPLICATIONS:  
-DRAINS:  
-SPECIMENS:  
+            ESTIMATED BLOOD LOSS:  
+            COMPLICATIONS:  
+            DRAINS:  
+            SPECIMENS:
 
-DISPOSITION:  
-"""
+            DISPOSITION:
+            """
         case .discharge:
             return """
-ADMISSION DATE:  
-DISCHARGE DATE:  
+            ADMISSION DATE:  
+            DISCHARGE DATE:
 
-ADMISSION DIAGNOSIS:  
-DISCHARGE DIAGNOSIS:  
+            ADMISSION DIAGNOSIS:  
+            DISCHARGE DIAGNOSIS:
 
-HOSPITAL COURSE:  
+            HOSPITAL COURSE:
 
-PROCEDURES / OPERATIONS:  
-CONSULTS:  
+            PROCEDURES / OPERATIONS:  
+            CONSULTS:
 
-DISCHARGE MEDICATIONS:  
+            DISCHARGE MEDICATIONS:
 
-DISCHARGE INSTRUCTIONS:  
-FOLLOW UP:  
-"""
+            DISCHARGE INSTRUCTIONS:  
+            FOLLOW UP:
+            """
         case .eeg:
             return """
-CLINICAL HISTORY:  
-REASON:  
-HISTORY:  
-NOTES:  
+            CLINICAL HISTORY:  
+            REASON:  
+            HISTORY:  
+            NOTES:
 
-TECHNICAL DETAILS:
-DURATION:  30 min
-MONTAGE:  10-20 system
-STATE:  Awake/Asleep
-ACTIVATIONS:  Hyperventilation [ ]  Photic stimulation [ ]
+            TECHNICAL DETAILS:
+            DURATION:  30 min
+            MONTAGE:  10-20 system
+            STATE:  Awake/Asleep
+            ACTIVATIONS:  Hyperventilation [ ]  Photic stimulation [ ]
 
-EEG FINDINGS:
-BACKGROUND:  
-FOCAL:  
-GENERALIZED:  
-SEIZURES:  
+            EEG FINDINGS:
+            BACKGROUND:  
+            FOCAL:  
+            GENERALIZED:  
+            SEIZURES:
 
-IMPRESSION:  
+            IMPRESSION:
 
-RECOMMENDATIONS:  
-"""
+            RECOMMENDATIONS:
+            """
         case .prescription:
             return """
-EPISODE DIAGNOSIS:  
+            Rx
 
-MEDICATION:  
-DOSE:  
-ROUTE:  
-FREQUENCY:  
-DURATION:  
+            Drug Name:  
+            Strength:  
+            Route:  
+            Frequency:  
+            Duration:
 
-REFILLS:  
+            Quantity:  
+            Refills:
 
-INDICATION:  
-SPECIAL INSTRUCTIONS:  
-"""
+            Instructions:
+
+            Prescriber Signature: _______________
+            Date: _______________
+            """
         case .blank:
-            return """
-TITLE:  
-BODY:  
-"""
+            return ""
         }
     }
 }
 
-// MARK: - Record Note
+// MARK: - RecordNote
 
 public struct RecordNote: Identifiable, Codable, Hashable {
     public var id: UUID = UUID()
     public var patientID: UUID
-
-    public var type: RecordType
-    public var title: String            // used mainly for .blank
-    public var body: String
-
+    public var type: RecordType = .soap
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
+    public var body: String = ""
 
+    // ✅ Finalization support
     public var isFinalized: Bool = false
     public var finalizedAt: Date? = nil
+    public var isDeleted: Bool = false
 
-    // Prescription helpers (optional)
-    public var episodeDiagnosis: String = ""
-    public var medicationKey: String = ""
-
-    /// Use this everywhere in UI (sidebar rows, navigation titles, PDFs…)
-    public var displayTitle: String {
-        if type == .blank {
-            return title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Clinical Note" : title
-        } else {
-            return type.headerTitle
-        }
-    }
-
-    public init(patientID: UUID, type: RecordType) {
+    public init(patientID: UUID, type: RecordType = .soap) {
         self.patientID = patientID
         self.type = type
         self.body = type.defaultBody
+    }
 
-        // Default title behavior
-        if type == .blank {
-            self.title = "Clinical Note"
-        } else {
-            self.title = "" // ignored for non-blank
-        }
+    public var displayTitle: String {
+        type.headerTitle
     }
 }
-// MARK: - Attachments
+
+// MARK: - Attachment
+
+public enum AttachmentType: String, Codable, CaseIterable, Identifiable {
+    case radiology = "Radiology"
+    case laboratory = "Laboratory"
+    case eeg = "EEG"
+    case medicalReport = "Medical Report"
+    case other = "Other"
+
+    public var id: String { rawValue }
+}
 
 public struct Attachment: Identifiable, Codable, Hashable {
-
-    public enum Category: String, Codable, CaseIterable, Identifiable {
-        case radiology = "Radiology"
-        case laboratory = "Laboratory"
-        case specialTest = "Special Test"
-        case medicalReport = "Medical Report"
-        public var id: String { rawValue }
-    }
-
     public var id: UUID = UUID()
     public var patientID: UUID
+    public var type: AttachmentType = .other
+    public var filename: String = ""
+    public var fileURL: URL?
+    public var createdAt: Date = Date()
+    public var isDeleted: Bool = false
 
-    public var category: Category
-    public var originalFileName: String
-    public var storedFileName: String        // filename saved in app Documents
-    public var importedAt: Date = Date()
-
-    public init(patientID: UUID,
-                category: Category,
-                originalFileName: String,
-                storedFileName: String) {
+    public init(patientID: UUID, type: AttachmentType = .other) {
         self.patientID = patientID
-        self.category = category
-        self.originalFileName = originalFileName
-        self.storedFileName = storedFileName
-        self.importedAt = Date()
+        self.type = type
     }
 }
+

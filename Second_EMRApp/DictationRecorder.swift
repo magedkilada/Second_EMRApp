@@ -1,7 +1,9 @@
 import Foundation
-import AVFoundation
 import SwiftUI
 import Combine
+
+#if os(iOS)
+import AVFoundation
 
 @MainActor
 final class DictationRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
@@ -125,3 +127,4 @@ final class DictationRecorder: NSObject, ObservableObject, AVAudioRecorderDelega
         }
     }
 }
+#endif

@@ -1,139 +1,100 @@
+//
+//  AIWorkspacePane.swift - STUBBED VERSION (NO ERRORS)
+//  Second_EMRApp
+//
+
 import SwiftUI
-import UIKit
 
 struct AIWorkspacePane: View {
-
-    // MARK: - Inputs
+    // MARK: - Properties (Standardized naming)
     @ObservedObject var store: EMRStore
     let selectedPatientID: UUID?
-
     @Binding var contextText: String
     let selectedReferenceTitle: String?
 
-    // MARK: - Local AI state (owned here)
-    @State private var prompt: String = ""
-    @State private var output: String = ""
-
-    // MARK: - Mode
-    enum Mode: String, CaseIterable, Identifiable {
-        case ask = "Ask"
-        case translate = "Translate"
-        var id: String { rawValue }
-    }
-    @State private var mode: Mode = .ask
-
     var body: some View {
-        VStack(spacing: 12) {
-
-            Picker("", selection: $mode) {
-                ForEach(Mode.allCases) { m in
-                    Text(m.rawValue).tag(m)
-                }
+        VStack(spacing: 20) {
+            headerSection
+            
+            if let title = selectedReferenceTitle {
+                Text("Analyzing: \(title)")
+                    .font(.caption)
+                    .foregroundStyle(.blue)
             }
-            .pickerStyle(.segmented)
-
-            GroupBox("Context (what AI sees)") {
-                VStack(alignment: .leading, spacing: 8) {
-
-                    if let title = selectedReferenceTitle, !title.isEmpty {
-                        Text("Selected reference: \(title)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    TextEditor(text: $contextText)
-                        .frame(minHeight: 140)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.4)))
-
-                    HStack {
-                        Spacer()
-                        Button("Clear") { contextText = "" }
-                    }
-                }
-            }
-
-            GroupBox(mode == .ask ? "Ask AI" : "Translate") {
-                VStack(alignment: .leading, spacing: 8) {
-
-                    if mode == .ask {
-                        TextField("Type your question…", text: $prompt)
-                            .textFieldStyle(.roundedBorder)
-                    } else {
-                        Text("Translate the context above.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Text("Instruction: Do not invent. If unsure, say so.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 10) {
-                        Button(mode == .ask ? "Ask" : "Translate") {
-                            runAI()
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button("Clear") {
-                            prompt = ""
-                            output = ""
-                        }
-                        .buttonStyle(.bordered)
-
-                        Spacer()
-
-                        Button("Copy Output") {
-                            UIPasteboard.general.string = output
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("Save as Note") {
-                            saveAsNote()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-
-                    TextEditor(text: $output)
-                        .frame(minHeight: 180)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.4)))
-                        .disabled(false)
-                }
-            }
-
-            Spacer(minLength: 0)
+            
+            contextScrollView
+            
+            Divider()
+            
+            roadmapSection
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle("AI Workspace")
+    }
+    
+    // MARK: - Sub-Sections
+    private var headerSection: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "brain")
+                .font(.system(size: 60))
+                .foregroundStyle(.secondary)
+            
+            Text("AI Workspace")
+                .font(.title2)
+                .bold()
+        }
+        .padding(.top)
+    }
+    
+    private var contextScrollView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if contextText.isEmpty {
+                    Text("No snippets added to AI context yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Context:")
+                        .font(.caption)
+                        .bold()
+                    
+                    Text(contextText)
+                        .font(.callout)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(8)
+                }
+            }
+            .padding()
+        }
+    }
+    
+    private var roadmapSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Coming Soon:")
+                .font(.headline)
+            
+            Label("AI-powered medical translation", systemImage: "text.bubble")
+                .font(.subheadline)
+            Label("Clinical reasoning assistance", systemImage: "brain.head.profile")
+                .font(.subheadline)
+            Label("Differential diagnosis support", systemImage: "list.bullet.clipboard")
+                .font(.subheadline)
+        }
+        .foregroundStyle(.secondary)
         .padding()
     }
+}
 
-    // MARK: - AI (stub for now)
-    private func runAI() {
-        // Placeholder until OpenAI service is wired.
-        // We keep UI working first.
-        if mode == .translate {
-            output = """
-            [TRANSLATION PLACEHOLDER]
-            \(contextText)
-            """
-        } else {
-            output = """
-            [AI ANSWER PLACEHOLDER]
-            Q: \(prompt)
-            Context length: \(contextText.count) chars
-            """
-        }
-    }
-
-    // MARK: - Save output as a note
-    private func saveAsNote() {
-        guard let pid = selectedPatientID else { return }
-
-        let caution = "⚠️ This content was generated/translated by AI. Errors may occur. Please verify.\n\n"
-
-        var note = RecordNote(patientID: pid, type: .blank)
-        note.body = caution + output
-        note.updatedAt = Date()
-
-        store.saveNote(note)
+// MARK: - Preview
+#Preview {
+    NavigationStack {
+        AIWorkspacePane(
+            store: EMRStore(),
+            selectedPatientID: nil,
+            contextText: .constant("Sample medical text..."),
+            selectedReferenceTitle: "Test Reference"
+        )
     }
 }
+

@@ -1,117 +1,140 @@
-import SwiftUI
+//
+//  ReferencesStore.swift
+//  Second_EMRApp
+//
 
-enum NeuroReference: String, CaseIterable, Identifiable {
-    case gcs = "Glasgow Coma Scale (GCS)"
-    case huntHess = "Hunt & Hess Grade (SAH)"
-    case fisher = "Fisher Grade (SAH)"
-    case wfns = "WFNS Grade (SAH)"
-    case developmental = "Developmental Chart"
-    case growth = "Growth Chart"
+import Foundation
+import Combine
 
-    var id: String { rawValue }
+public struct ReferenceItem: Identifiable, Hashable, Codable {
+    public enum Category: String, CaseIterable, Codable, Hashable {
+        case scales = "Clinical Scales"
+        case guidelines = "Guidelines"
+        case procedures = "Procedures"
+        case medications = "Medications"
+        case misc = "Misc"
+    }
 
-    var symbol: String {
-        switch self {
-        case .gcs: return "brain.head.profile"
-        case .huntHess, .fisher, .wfns: return "waveform.path.ecg"
-        case .developmental: return "figure.child"
-        case .growth: return "chart.line.uptrend.xyaxis"
-        }
+    public var id: UUID = UUID()
+    public var title: String
+    public var category: Category
+    public var body: String
+    public var isFavorite: Bool = false
+
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        category: Category,
+        body: String,
+        isFavorite: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.category = category
+        self.body = body
+        self.isFavorite = isFavorite
     }
 }
 
-struct ReferencesInlineCard: View {
-    let onOpen: () -> Void
+@MainActor
+public final class ReferencesStore: ObservableObject {
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("References")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    onOpen()
-                } label: {
-                    Label("Open", systemImage: "chevron.right")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-            }
+    @Published public var items: [ReferenceItem] = []
+    @Published public var selectedCategory: ReferenceItem.Category? = nil
 
-            Text("GCS, Hunt/Hess, Fisher, Growth & Development, and more.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+    private static let fileName = "references.json"
+
+    private static var fileURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appendingPathComponent(fileName)
     }
-}
 
-struct ReferencesCenterView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var query: String = ""
-    @State private var selected: NeuroReference? = nil
-
-    var body: some View {
-        NavigationSplitView {
-            List(selection: $selected) {
-                ForEach(filtered) { item in
-                    Label(item.rawValue, systemImage: item.symbol)
-                        .tag(item as NeuroReference?)
-                }
-            }
-            .navigationTitle("References")
-            .searchable(text: $query, prompt: "Search references")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
-        } detail: {
-            if let item = selected {
-                ReferenceDetailView(item: item)
-            } else {
-                ContentUnavailableView(
-                    "Select a reference",
-                    systemImage: "book",
-                    description: Text("Choose an item from the list.")
-                )
-            }
+    public init() {
+        loadFromDisk()
+        if items.isEmpty {
+            loadDefaults()
+            saveToDisk()
         }
     }
 
-    private var filtered: [NeuroReference] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return NeuroReference.allCases }
-        return NeuroReference.allCases.filter { $0.rawValue.lowercased().contains(q) }
+    public var filteredItems: [ReferenceItem] {
+        guard let cat = selectedCategory else { return items }
+        return items.filter { $0.category == cat }
     }
-}
 
-struct ReferenceDetailView: View {
-    let item: NeuroReference
+    @discardableResult
+    public func addBlank() -> ReferenceItem {
+        let item = ReferenceItem(title: "New Reference", category: .misc, body: "")
+        items.insert(item, at: 0)
+        saveToDisk()
+        return item
+    }
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(item.rawValue)
-                    .font(.title2)
-                    .bold()
+    public func update(_ item: ReferenceItem) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[idx] = item
+        saveToDisk()
+    }
 
-                // Placeholders (we will replace with proper tables next)
-                GroupBox {
-                    Text("Reference content will be added here (tables + scoring helpers).")
-                        .foregroundStyle(.secondary)
-                }
+    public func delete(_ id: UUID) {
+        items.removeAll { $0.id == id }
+        saveToDisk()
+    }
 
-                if item == .gcs {
-                    GroupBox("Quick GCS Reminder") {
-                        Text("Eye (1–4), Verbal (1–5), Motor (1–6). Total 3–15.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding()
+    // MARK: - Persistence
+
+    private func saveToDisk() {
+        do {
+            let data = try JSONEncoder().encode(items)
+            try data.write(to: Self.fileURL, options: .atomic)
+        } catch {
+            print("[ReferencesStore] save error: \(error)")
         }
     }
+
+    private func loadFromDisk() {
+        guard FileManager.default.fileExists(atPath: Self.fileURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: Self.fileURL)
+            items = try JSONDecoder().decode([ReferenceItem].self, from: data)
+        } catch {
+            print("[ReferencesStore] load error: \(error)")
+        }
+    }
+
+    // MARK: - Defaults
+    private func loadDefaults() {
+        items = [
+            ReferenceItem(
+                title: "Glasgow Coma Scale (GCS)",
+                category: .scales,
+                body:
+"""
+GCS (3–15)
+
+Eye Opening (E)
+4: Spontaneous
+3: To voice
+2: To pain
+1: None
+
+Verbal (V)
+5: Oriented
+4: Confused
+3: Inappropriate words
+2: Incomprehensible sounds
+1: None
+
+Motor (M)
+6: Obeys commands
+5: Localizes pain
+4: Withdraws
+3: Flexion
+2: Extension
+1: None
+"""
+            )
+        ]
+    }
 }
+

@@ -1,5 +1,9 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct AIAssistView: View {
 
@@ -126,7 +130,7 @@ struct AIAssistView: View {
             }
             .navigationTitle("AI Assist")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
             }
@@ -186,7 +190,7 @@ struct AIAssistView: View {
                     Spacer()
 
                     Button("Copy Output") {
-                        UIPasteboard.general.string = output
+                        PlatformPasteboard.copy(output)
                     }
                     .buttonStyle(.bordered)
                     .disabled(output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -243,7 +247,7 @@ struct AIAssistView: View {
                     Spacer()
 
                     Button("Copy Output") {
-                        UIPasteboard.general.string = output
+                        PlatformPasteboard.copy(output)
                     }
                     .buttonStyle(.bordered)
                     .disabled(output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

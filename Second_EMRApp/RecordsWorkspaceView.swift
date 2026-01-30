@@ -1,557 +1,785 @@
+
 //
 //  RecordsWorkspaceView.swift
 //  Second_EMRApp
 //
 
 import SwiftUI
+import QuickLook
 import UniformTypeIdentifiers
 import PhotosUI
-import QuickLook
-import UIKit
 
 struct RecordsWorkspaceView: View {
-
-    // MARK: - Input
     let patient: Patient
 
-    // MARK: - Environment
     @EnvironmentObject private var store: EMRStore
     @EnvironmentObject private var physicians: PhysiciansStore
-    @Environment(\.horizontalSizeClass) private var hSize
-    private var isPhone: Bool { hSize == .compact }
 
-    // MARK: - iPhone Navigation
-    enum PhoneRoute: Hashable {
-        case note(UUID)
-        case attachment(UUID)
-    }
-    @State private var phonePath: [PhoneRoute] = []   // MUST exist once
+    // MARK: - Local UI state
+    @State private var showNewNoteSheet = false
+    @State private var workingVitals: SmartVitalsEntry?
 
-    // MARK: - Selection
+    @State private var selectedNoteID: UUID? = nil
     @State private var selectedAttachmentID: UUID? = nil
 
-    private var selectedNoteIsFinalized: Bool {
-        guard let id = store.selectedNoteID,
-              let n = noteByID(id) else { return false }
-        return n.isFinalized
-    }
+    // Warning dialogs
+    @State private var showSwitchNoteWarning = false
+    @State private var pendingNoteID: UUID? = nil
 
-    // MARK: - Import UI
-    @State private var importingCategory: Attachment.Category = .radiology
+    // Attachment flow
+    @State private var showAttachmentSourceMenu = false
+    @State private var pendingAttachmentCategory: AttachmentType = .medicalReport
+    @State private var showCategoryPicker = false
+    @State private var attachmentSourceIsPhotos = false
     @State private var showFileImporter = false
     @State private var showPhotoPicker = false
-    @State private var pickedPhotos: [PhotosPickerItem] = []
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
 
-    // MARK: - Errors
-    @State private var errorMessage: String?
-
-    // MARK: - QuickLook
-    // MARK: - QuickLook
-    @State private var previewItem: PreviewItem? = nil
-
-    private struct PreviewItem: Identifiable {
-        let id = UUID()
-        let url: URL
+    enum SearchScope: String, CaseIterable, Identifiable {
+        case thisPatient = "This Patient"
+        case global = "Global"
+        var id: String { rawValue }
     }
 
+    @State private var recordSearchText: String = ""
+    @State private var searchScope: SearchScope = .thisPatient
 
-    // MARK: - Body
-    var body: some View {
-        Group {
-            if isPhone {
-                phoneNavigationLayout
-            } else {
-                ipadSplitLayout
-            }
-        }
-        .toolbar { topRightToolbar }
-
-        // File import
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: [.data, .content, .item],
-            allowsMultipleSelection: false
-        ) { result in
-            do {
-                let urls = try result.get()
-                guard let url = urls.first else { return }
-                importPickedFile(url)
-            } catch {
-                errorMessage = "Import failed: \(error.localizedDescription)"
-            }
-        }
-
-        // Photo import
-        .photosPicker(
-            isPresented: $showPhotoPicker,
-            selection: $pickedPhotos,
-            maxSelectionCount: 1,
-            matching: .images
-        )
-        .onChange(of: pickedPhotos) { _, newItems in
-            guard let item = newItems.first else { return }
-            Task { await importPickedPhoto(item) }
-        }
-
-        // Error alert
-        .alert("Error", isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
-
-        // Preview sheet
-        // Preview sheet (opens ONLY when we have a URL)
-        .sheet(item: $previewItem) { item in
-            QuickLookPreview(url: item.url)
-        }
+    enum LeftPanelMode: String {
+        case notes
+        case attachments
     }
+    @State private var leftPanelMode: LeftPanelMode = .notes
 
-    // MARK: - iPhone layout (reliable push)
-    private var phoneNavigationLayout: some View {
-        NavigationStack(path: $phonePath) {
-            recordsList
-                .navigationTitle(patientName)
-                .navigationBarTitleDisplayMode(.inline)
-                .navigationDestination(for: PhoneRoute.self) { route in
-                    switch route {
-                    case .note(let id):
-                        noteEditorDestination(noteID: id)
-                            .environmentObject(physicians) // ✅ critical to prevent crash/freeze
-                    case .attachment(let id):
-                        attachmentDestination(attachmentID: id)
-                    }
-                }
-        }
-    }
-
-    // MARK: - iPad layout
-    private var ipadSplitLayout: some View {
-        NavigationSplitView {
-            recordsList
-                .navigationTitle("Medical Records")
-        } detail: {
-            recordsDetail
-                .navigationTitle(patientName)
-        }
-    }
-
-    private var recordsDetail: some View {
-        Group {
-            if let noteID = store.selectedNoteID {
-                noteEditorDestination(noteID: noteID)
-                    .environmentObject(physicians)
-            } else if let attID = selectedAttachmentID {
-                attachmentDestination(attachmentID: attID)
-            } else {
-                ContentUnavailableView("Select a note", systemImage: "doc.text")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Shared list
-    private var recordsList: some View {
-        List {
-            Section("Notes") {
-                if notesForPatient.isEmpty {
-                    Text("No notes yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(notesForPatient) { note in
-                        Button {
-                            // selection first
-                            store.selectedNoteID = note.id
-                            selectedAttachmentID = nil
-
-                            // then push on phone
-                            if isPhone {
-                                phonePath.append(.note(note.id))
-                            }
-                        } label: {
-                            noteRow(note)
-                                .contentShape(Rectangle()) // ✅ ensures full-row tap
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(
-                            store.selectedNoteID == note.id
-                            ? Color.yellow.opacity(0.25)
-                            : Color.clear
-                        )
-                    }
-                }
-            }
-
-            Section("Attachments") {
-                if attachmentsForPatient.isEmpty {
-                    Text("No attachments yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(attachmentsForPatient) { att in
-                        Button {
-                            selectedAttachmentID = att.id
-                            store.selectedNoteID = nil
-
-                            if isPhone {
-                                phonePath.append(.attachment(att.id))
-                            }
-                        } label: {
-                            attachmentRow(att)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(
-                            selectedAttachmentID == att.id
-                            ? Color.yellow.opacity(0.18)
-                            : Color.clear
-                        )
-                    }
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-    }
-
-    // MARK: - Rows
-    private func noteRow(_ note: RecordNote) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(note.displayTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if note.isFinalized {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func attachmentRow(_ att: Attachment) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(att.originalFileName)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                Text(att.category.rawValue)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Image(systemName: "paperclip")
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
-    }
-
-    // MARK: - Destinations
-    private func noteEditorDestination(noteID: UUID) -> some View {
-        Group {
-            if let binding = bindingForNote(id: noteID) {
-                NoteEditorView(note: binding, patient: patient) { saved in
-                    // mutate via binding (this ensures list refresh)
-                    var n = saved
-                    n.updatedAt = Date()
-                    binding.wrappedValue = n
-                    store.lastModified = Date()
-                }
-                .onAppear {
-                    store.selectedNoteID = noteID
-                    selectedAttachmentID = nil
-                }
-            } else {
-                Text("Note not found.")
-                    .foregroundStyle(.secondary)
-                    .padding()
-            }
-        }
-    }
-
-    private func attachmentDestination(attachmentID: UUID) -> some View {
-        Group {
-            if let att = attachmentByID(attachmentID),
-               let url = attachmentFileURL(att) {
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Button {
-                        previewItem = PreviewItem(url: url)
-                    } label: {
-                        Label("Open Preview", systemImage: "doc.text.magnifyingglass")
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Text(att.originalFileName)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-                }
-                .padding()
-                .onAppear {
-                    selectedAttachmentID = attachmentID
-                    store.selectedNoteID = nil
-                }
-
-            } else {
-                Text("Attachment not found.")
-                    .foregroundStyle(.secondary)
-                    .padding()
-            }
-        }
-        .navigationTitle("Attachment")
-    }
-
-    // MARK: - Toolbar
-    @ToolbarContentBuilder
-    private var topRightToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-
-            if store.selectedNoteID != nil {
-                Button {
-                    finalizeSelectedNote()
-                } label: {
-                    Label(
-                        selectedNoteIsFinalized ? "Finalized" : "Finalize",
-                        systemImage: selectedNoteIsFinalized ? "lock.fill" : "checkmark.seal"
-                    )
-                }
-                .disabled(selectedNoteIsFinalized)
-            }
-
-            // New note
-            Menu {
-                Button("H&P")          { addNote(type: RecordType.hp) }
-                Button("SOAP")         { addNote(type: RecordType.soap) }
-                Button("Operative")    { addNote(type: RecordType.operative) }
-                Button("Discharge")    { addNote(type: RecordType.discharge) }
-                Button("EEG")          { addNote(type: RecordType.eeg) }
-                Button("Prescription") { addNote(type: RecordType.prescription) }
-                Button("Clinical Note"){ addNote(type: RecordType.blank) }
-            } label: {
-                Image(systemName: "square.and.pencil")
-            }
-
-            // Import
-            Menu {
-                Menu("Import File…") {
-                    ForEach(Attachment.Category.allCases) { cat in
-                        Button(cat.rawValue) {
-                            importingCategory = cat
-                            showFileImporter = true
-                        }
-                    }
-                }
-                Menu("Import Photo…") {
-                    ForEach(Attachment.Category.allCases) { cat in
-                        Button(cat.rawValue) {
-                            importingCategory = cat
-                            showPhotoPicker = true
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "paperclip")
-            }
-
-            // Delete
-            Button(role: .destructive) {
-                deleteCurrentSelection()
-            } label: {
-                Image(systemName: "trash")
-            }
-            .disabled(store.selectedNoteID == nil && selectedAttachmentID == nil)
-        }
-    }
-
-    // MARK: - Data helpers
-    private var patientName: String {
-        let en = patient.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !en.isEmpty { return en }
-        let ar = patient.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !ar.isEmpty { return ar }
-        return "Patient"
-    }
+    // MARK: - Derived data
 
     private var notesForPatient: [RecordNote] {
         store.notes
-            .filter { $0.patientID == patient.id }
+            .filter { $0.patientID == patient.id && !$0.isDeleted }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     private var attachmentsForPatient: [Attachment] {
         store.attachments
+            .filter { $0.patientID == patient.id && !$0.isDeleted }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private var vitalsForPatient: [SmartVitalsEntry] {
+        store.vitals
             .filter { $0.patientID == patient.id }
-            .sorted { $0.importedAt > $1.importedAt }
+            .sorted { $0.recordedAt > $1.recordedAt }
     }
 
-    private func noteByID(_ id: UUID) -> RecordNote? {
-        store.notes.first(where: { $0.id == id })
+    private func norm(_ s: String) -> String {
+        s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
     }
 
-    private func attachmentByID(_ id: UUID) -> Attachment? {
-        store.attachments.first(where: { $0.id == id })
-    }
-
-    private func bindingForNote(id: UUID) -> Binding<RecordNote>? {
-        guard let idx = store.notes.firstIndex(where: { $0.id == id }) else { return nil }
-        return $store.notes[idx]
-    }
-
-    // MARK: - Actions
-    private func addNote(type: RecordType) {
-        var n = RecordNote(patientID: patient.id, type: type)
-        n.updatedAt = Date()
-        store.notes.append(n)
-        store.lastModified = Date()
-
-        store.selectedNoteID = n.id
-        selectedAttachmentID = nil
-
-        if isPhone {
-            phonePath.append(.note(n.id))
+    private var filteredNotes: [RecordNote] {
+        let q = norm(recordSearchText.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !q.isEmpty else { return notesForPatient }
+        return notesForPatient.filter {
+            norm($0.displayTitle).contains(q) || norm($0.body).contains(q)
         }
     }
 
-    private func finalizeSelectedNote() {
-        guard let id = store.selectedNoteID,
-              let idx = store.notes.firstIndex(where: { $0.id == id }) else { return }
-
-        store.notes[idx].isFinalized = true
-        store.notes[idx].finalizedAt = Date()
-        store.notes[idx].updatedAt = Date()
-        store.lastModified = Date()
+    private var filteredGlobalNotes: [RecordNote] {
+        let q = norm(recordSearchText.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !q.isEmpty else { return [] }
+        return store.notes
+            .filter { !$0.isDeleted }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .filter { norm($0.displayTitle).contains(q) || norm($0.body).contains(q) }
     }
 
-    private func deleteCurrentSelection() {
-        if let id = store.selectedNoteID {
-            store.notes.removeAll(where: { $0.id == id })
-            store.selectedNoteID = nil
-            store.lastModified = Date()
-        } else if let id = selectedAttachmentID {
-            store.attachments.removeAll(where: { $0.id == id })
+    private var filteredAttachments: [Attachment] {
+        let q = norm(recordSearchText.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !q.isEmpty else { return attachmentsForPatient }
+
+        return attachmentsForPatient.filter {
+            norm($0.filename).contains(q) ||
+            norm($0.type.rawValue).contains(q)
+        }
+    }
+
+    @Environment(\.horizontalSizeClass) private var hSize
+    private var isCompact: Bool { hSize == .compact }
+
+    // MARK: - Body
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isCompact {
+                    compactRecordsBody
+                } else {
+                    HStack(spacing: 0) {
+                        leftRecordsPanel
+                            .frame(minWidth: 320, maxWidth: 420)
+                            .frame(maxHeight: .infinity)
+
+                        Divider()
+
+                        rightEditorPanel
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+            }
+            .navigationTitle("Records")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Menu {
+                        Button {
+                            leftPanelMode = .notes
+                            selectedAttachmentID = nil
+                        } label: { Label("Notes", systemImage: "doc.text") }
+
+                        Button {
+                            leftPanelMode = .attachments
+                            selectedNoteID = nil
+                        } label: { Label("Attachments", systemImage: "paperclip") }
+                    } label: {
+                        Image(systemName: leftPanelMode == .attachments ? "paperclip" : "doc.text")
+                    }
+                }
+            }
+            .sheet(isPresented: $showNewNoteSheet) { noteTypePickerSheet }
+            .sheet(item: $workingVitals) { entry in
+                vitalsEntrySheet(entry: entry)
+            }
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.pdf, .image],
+                allowsMultipleSelection: true
+            ) { result in
+                handleAttachmentImport(result)
+            }
+            .photosPicker(
+                isPresented: $showPhotoPicker,
+                selection: $selectedPhotoItems,
+                maxSelectionCount: 10,
+                matching: .images
+            )
+            .onChange(of: selectedPhotoItems) { _, newItems in
+                handlePhotoImport(newItems)
+            }
+            .confirmationDialog("Attachment Source", isPresented: $showAttachmentSourceMenu) {
+                Button("Files") {
+                    attachmentSourceIsPhotos = false
+                    showCategoryPicker = true
+                }
+                Button("Photos") {
+                    attachmentSourceIsPhotos = true
+                    showCategoryPicker = true
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .confirmationDialog("Attachment Category", isPresented: $showCategoryPicker) {
+                Button("Medical Report") { pendingAttachmentCategory = .medicalReport; openPicker() }
+                Button("Radiology") { pendingAttachmentCategory = .radiology; openPicker() }
+                Button("Laboratory") { pendingAttachmentCategory = .laboratory; openPicker() }
+                Button("Special Tests (EEG etc.)") { pendingAttachmentCategory = .eeg; openPicker() }
+                Button("Cancel", role: .cancel) {}
+            }
+            .onChange(of: selectedNoteID) { _, _ in
+                autoDeleteEmptyNote(selectedNoteID)
+            }
+            .alert("Switch Note?", isPresented: $showSwitchNoteWarning) {
+                Button("Save & Switch") {
+                    selectedNoteID = pendingNoteID
+                    pendingNoteID = nil
+                }
+                Button("Delete & Switch", role: .destructive) {
+                    if let currentID = selectedNoteID { store.deleteNote(currentID) }
+                    selectedNoteID = pendingNoteID
+                    pendingNoteID = nil
+                }
+                Button("Cancel", role: .cancel) { pendingNoteID = nil }
+            } message: {
+                Text("Current note has content. Save it before switching, or delete it?")
+            }
+        }
+    }
+
+    // MARK: - Compact (iPhone) Body
+
+    private var compactRecordsBody: some View {
+        VStack(spacing: 0) {
+            leftRecordsPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationDestination(item: $selectedNoteID) { noteID in
+            if let idx = store.notes.firstIndex(where: { $0.id == noteID }) {
+                let binding = Binding<RecordNote>(
+                    get: { store.notes[idx] },
+                    set: { store.saveNote($0) }
+                )
+                VStack(spacing: 0) {
+                    headerBar(note: store.notes[idx])
+                    Divider()
+                    NoteEditorView(
+                        note: binding,
+                        patient: patient,
+                        onSave: { store.saveNote($0) }
+                    )
+                    .environmentObject(store)
+                    .environmentObject(physicians)
+                }
+                .inlineNavigationTitle()
+            }
+        }
+        .navigationDestination(item: $selectedAttachmentID) { attachmentID in
+            if let att = store.attachments.first(where: { $0.id == attachmentID }) {
+                AttachmentPreviewPane(patient: patient, attachment: att) {
+                    // Perform delete, then pop after a tick so SwiftUI processes it
+                    store.softDeleteAttachment(attachmentID)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        selectedAttachmentID = nil
+                    }
+                }
+                .inlineNavigationTitle()
+            }
+        }
+    }
+
+    // MARK: - Panels
+
+    private var leftRecordsPanel: some View {
+        VStack(spacing: 12) {
+            topActionButtons
+
+            VStack(spacing: 8) {
+                Picker("", selection: $searchScope) {
+                    ForEach(SearchScope.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                TextField("Search records...", text: $recordSearchText)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(.horizontal, 12)
+
+            Group {
+                if leftPanelMode == .notes {
+                    notesListWithVitals
+                } else {
+                    attachmentsList
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(.top, 4)
+        .background(Color.systemGroupedBg)
+    }
+
+    private var topActionButtons: some View {
+        HStack(spacing: 14) {
+            recordActionBtn(title: "Add Note", icon: "doc.badge.plus", color: .blue) { showNewNoteSheet = true }
+            recordActionBtn(title: "Add Vitals", icon: "waveform.path.ecg", color: .green) { openNewVitalsEntry() }
+            recordActionBtn(title: "Attachments", icon: "paperclip", color: .orange) { showAttachmentSourceMenu = true }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private func recordActionBtn(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 26, weight: .semibold))
+                Text(title).font(.footnote).fontWeight(.semibold)
+            }
+            .frame(maxWidth: .infinity, minHeight: 76)
+            .background(color.opacity(0.9))
+            .foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var notesListWithVitals: some View {
+        List {
+            if !vitalsForPatient.isEmpty {
+                Section("Recent Vitals") {
+                    ForEach(Array(vitalsForPatient.prefix(5)), id: \.id) { entry in
+                        Button {
+                            workingVitals = entry
+                        } label: { VitalsHistoryRow(entry: entry) }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if searchScope == .global, !recordSearchText.isEmpty {
+                Section("Global Results") {
+                    ForEach(filteredGlobalNotes) { note in
+                        Button { selectNote(note.id) } label: { NoteRow(note: note) }
+                    }
+                }
+            }
+
+            Section("This Patient") {
+                ForEach(filteredNotes) { note in
+                    Button { selectNote(note.id) } label: { NoteRow(note: note) }
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+
+    private var attachmentsList: some View {
+        List(filteredAttachments) { att in
+            Button {
+                selectedAttachmentID = att.id
+                selectedNoteID = nil
+                leftPanelMode = .attachments
+            } label: {
+                AttachmentRow(attachment: att)
+            }
+            .buttonStyle(.plain)
+        }
+        .listStyle(.plain)
+    }
+
+    private var rightEditorPanel: some View {
+        Group {
+            if let noteID = selectedNoteID,
+               let idx = store.notes.firstIndex(where: { $0.id == noteID }) {
+
+                let binding = Binding<RecordNote>(
+                    get: { store.notes[idx] },
+                    set: { store.saveNote($0) }
+                )
+
+                VStack(spacing: 0) {
+                    headerBar(note: store.notes[idx])
+                    Divider()
+                    NoteEditorView(
+                        note: binding,
+                        patient: patient,
+                        onSave: { store.saveNote($0) }
+                    )
+                    .environmentObject(store)
+                    .environmentObject(physicians)
+                }
+
+            } else if let attachmentID = selectedAttachmentID,
+                      let att = store.attachments.first(where: { $0.id == attachmentID }) {
+
+                AttachmentPreviewPane(patient: patient, attachment: att) {
+                    store.softDeleteAttachment(attachmentID)
+                    selectedAttachmentID = nil
+                }
+
+            } else {
+                emptyState
+            }
+        }
+        .background(Color.secondarySystemGroupedBg)
+    }
+
+    private func headerBar(note: RecordNote) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(patient.nameEnglish.isEmpty ? "Unnamed Patient" : patient.nameEnglish)
+                    .font(.title2).bold()
+
+                if let age = patient.ageString {
+                    Text("\(age) \u{2022} \(patient.gender.rawValue)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("MRN: \(patient.mrn)")
+                    .font(.caption).bold()
+                Text(note.displayTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(Color.secondarySystemGroupedBg)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Text("Select a note or attachment")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Use the buttons on the left to begin.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Sheets
+
+    private var noteTypePickerSheet: some View {
+        NavigationStack {
+            List(RecordType.allCases) { type in
+                Button {
+                    createNewNote(type: type)
+                    showNewNoteSheet = false
+                } label: {
+                    Label(type.headerTitle, systemImage: "doc.text")
+                }
+            }
+            .navigationTitle("New Note")
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func vitalsEntrySheet(entry: SmartVitalsEntry) -> some View {
+        SmartVitalsEntrySheet(
+            patient: patient,
+            vitals: Binding(
+                get: { workingVitals ?? entry },
+                set: { workingVitals = $0 }
+            ),
+            onCancel: { workingVitals = nil },
+            onInsertIntoNote: { saved in
+                store.addOrUpdateVitals(saved)
+                autoInsertVitalsIntoLatestNote(saved)
+                workingVitals = nil
+            },
+            onSaveOnly: { saved in
+                store.addOrUpdateVitals(saved)
+                workingVitals = nil
+            }
+        )
+        .environmentObject(store)
+    }
+
+    // MARK: - Logic
+
+    private func selectNote(_ noteID: UUID) {
+        if let currentID = selectedNoteID, currentID != noteID, hasUnsavedChanges(currentID) {
+            pendingNoteID = noteID
+            showSwitchNoteWarning = true
+        } else {
+            selectedNoteID = noteID
             selectedAttachmentID = nil
-            store.lastModified = Date()
+            leftPanelMode = .notes
         }
     }
 
-    // MARK: - Import (local, iPhone-safe)
+    private func hasUnsavedChanges(_ noteID: UUID) -> Bool {
+        guard let note = store.notes.first(where: { $0.id == noteID }) else { return false }
+        let currentBody = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !currentBody.isEmpty && currentBody != note.type.defaultBody.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
-    private func importPickedFile(_ url: URL) {
-        do {
-            let dest = try persistImportedFile(url: url, category: importingCategory)
-            let att = Attachment(
-                patientID: patient.id,
-                category: importingCategory,
-                originalFileName: url.lastPathComponent,
-                storedFileName: dest.lastPathComponent
-            )
-            store.attachments.append(att)
-            store.lastModified = Date()
-        } catch {
-            errorMessage = "Import failed: \(error.localizedDescription)"
+    private func autoDeleteEmptyNote(_ noteID: UUID?) {
+        guard let id = noteID,
+              let note = store.notes.first(where: { $0.id == id }) else { return }
+        if note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            store.deleteNote(id)
         }
     }
 
-    private func importPickedPhoto(_ item: PhotosPickerItem) async {
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self) else { return }
-            let filename = "photo-\(UUID().uuidString).jpg"
-            let dest = try persistImportedData(data: data, fileName: filename, category: importingCategory)
-            let att = Attachment(
-                patientID: patient.id,
-                category: importingCategory,
-                originalFileName: filename,
-                storedFileName: dest.lastPathComponent
-            )
-            await MainActor.run {
-                store.attachments.append(att)
-                store.lastModified = Date()
+    private func openNewVitalsEntry() {
+        workingVitals = SmartVitalsEntry(patientID: patient.id)
+    }
+
+    private func createNewNote(type: RecordType) {
+        let note = RecordNote(patientID: patient.id, type: type)
+        store.addNote(note)
+        selectedNoteID = note.id
+        selectedAttachmentID = nil
+        leftPanelMode = .notes
+    }
+
+    private func openPicker() {
+        if attachmentSourceIsPhotos {
+            showPhotoPicker = true
+        } else {
+            showFileImporter = true
+        }
+    }
+
+    private func handleAttachmentImport(_ result: Result<[URL], Error>) {
+        if case .success(let urls) = result {
+            for url in urls {
+                var att = Attachment(patientID: patient.id, type: pendingAttachmentCategory)
+                att.filename = url.lastPathComponent
+                att.fileURL = url
+                store.addAttachment(att)
+                selectedAttachmentID = att.id
             }
-        } catch {
-            await MainActor.run {
-                errorMessage = "Photo import failed: \(error.localizedDescription)"
+            leftPanelMode = .attachments
+            selectedNoteID = nil
+        }
+    }
+
+    private func handlePhotoImport(_ items: [PhotosPickerItem]) {
+        for item in items {
+            item.loadTransferable(type: Data.self) { result in
+                if case .success(let data) = result, let data = data {
+                    DispatchQueue.main.async {
+                        let filename = "Photo_\(Date().formatted(date: .numeric, time: .shortened)).jpg"
+                            .replacingOccurrences(of: "/", with: "-")
+                            .replacingOccurrences(of: ":", with: "-")
+                            .replacingOccurrences(of: " ", with: "_")
+                        let tempURL = FileManager.default.temporaryDirectory
+                            .appendingPathComponent(filename)
+                        try? data.write(to: tempURL)
+
+                        var att = Attachment(patientID: patient.id, type: pendingAttachmentCategory)
+                        att.filename = filename
+                        att.fileURL = tempURL
+                        store.addAttachment(att)
+                        selectedAttachmentID = att.id
+                        leftPanelMode = .attachments
+                        selectedNoteID = nil
+                    }
+                }
             }
         }
+        selectedPhotoItems = []
     }
 
-    private func attachmentFileURL(_ att: Attachment) -> URL? {
-        // We store files in our own Documents subfolder, so this is deterministic.
-        // Also tries a few fallback locations in case you already have legacy storage.
-        let fm = FileManager.default
-        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+    private func autoInsertVitalsIntoLatestNote(_ vitals: SmartVitalsEntry) {
+        // Find the most recent non-finalized note for this patient
+        guard let idx = store.notes.firstIndex(where: {
+            $0.patientID == patient.id && !$0.isDeleted && !$0.isFinalized
+        }) else { return }
 
-        let preferred = docs
-            .appendingPathComponent("EMR_Attachments", isDirectory: true)
-            .appendingPathComponent(att.patientID.uuidString, isDirectory: true)
-            .appendingPathComponent(att.category.rawValue, isDirectory: true)
-            .appendingPathComponent(att.storedFileName)
+        let vitalsText = "\n" + vitals.formattedBlockCompact(patient: patient, useAI: false) + "\n"
+        var lines = store.notes[idx].body.components(separatedBy: "\n")
 
-        if fm.fileExists(atPath: preferred.path) { return preferred }
-
-        // Fallbacks (legacy)
-        let candidates: [URL] = [
-            docs.appendingPathComponent(att.storedFileName),
-            docs.appendingPathComponent(att.patientID.uuidString).appendingPathComponent(att.storedFileName),
-            docs.appendingPathComponent("Attachments").appendingPathComponent(att.storedFileName),
-            docs.appendingPathComponent("Attachments").appendingPathComponent(att.patientID.uuidString).appendingPathComponent(att.storedFileName)
-        ]
-        return candidates.first(where: { fm.fileExists(atPath: $0.path) })
-    }
-
-    private func persistImportedFile(url: URL, category: Attachment.Category) throws -> URL {
-        let fm = FileManager.default
-        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-
-        let dir = docs
-            .appendingPathComponent("EMR_Attachments", isDirectory: true)
-            .appendingPathComponent(patient.id.uuidString, isDirectory: true)
-            .appendingPathComponent(category.rawValue, isDirectory: true)
-
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-
-        let ext = url.pathExtension
-        let stored = "\(UUID().uuidString)" + (ext.isEmpty ? "" : ".\(ext)")
-        let dest = dir.appendingPathComponent(stored)
-
-        // ✅ IMPORTANT: Files app gives security-scoped URLs
-        let didStart = url.startAccessingSecurityScopedResource()
-        defer {
-            if didStart { url.stopAccessingSecurityScopedResource() }
+        let keywords = ["physical examination", "objective", "exam:", "examination:", "pe:", "o:"]
+        var insertAt: Int?
+        for (i, line) in lines.enumerated() {
+            let lower = line.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            if keywords.contains(where: { lower.contains($0) || lower.hasPrefix($0) }) {
+                insertAt = i + 1
+                break
+            }
         }
 
-        // Copy in (overwrite if exists)
-        if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-        try fm.copyItem(at: url, to: dest)
+        if let at = insertAt, at <= lines.count {
+            lines.insert(vitalsText, at: at)
+        } else {
+            lines.append(vitalsText)
+        }
 
-        return dest
-    }
-
-    private func persistImportedData(data: Data, fileName: String, category: Attachment.Category) throws -> URL {
-        let fm = FileManager.default
-        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-
-        let dir = docs
-            .appendingPathComponent("EMR_Attachments", isDirectory: true)
-            .appendingPathComponent(patient.id.uuidString, isDirectory: true)
-            .appendingPathComponent(category.rawValue, isDirectory: true)
-
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-
-        let stored = "\(UUID().uuidString)-\(fileName)"
-        let dest = dir.appendingPathComponent(stored)
-        try data.write(to: dest, options: [.atomic])
-        return dest
+        store.notes[idx].body = lines.joined(separator: "\n")
+        store.saveNote(store.notes[idx])
     }
 }
 
+// MARK: - Row Subviews
 
+private struct VitalsHistoryRow: View {
+    let entry: SmartVitalsEntry
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(entry.recordedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption).bold()
+                .foregroundStyle(.blue)
+
+            Text(entry.formattedBlock(includePercentiles: false, isUnder5: false))
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondarySystemGroupedBg)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct NoteRow: View {
+    let note: RecordNote
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(note.displayTitle)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Spacer()
+                if note.isFinalized {
+                    Image(systemName: "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Text(note.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(note.body)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondarySystemGroupedBg)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct AttachmentRow: View {
+    let attachment: Attachment
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: attachment.type.iconName)
+                .foregroundStyle(attachment.type.displayColor)
+                .font(.title2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+
+                Text(attachment.type.rawValue)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(Color.secondarySystemGroupedBg)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct AttachmentPreviewPane: View {
+    let patient: Patient
+    let attachment: Attachment
+    let onDelete: () -> Void
+
+    @State private var showQuickLook = false
+    @State private var showDeleteConfirm = false
+    @Environment(\.horizontalSizeClass) private var hSize
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            Image(systemName: attachment.type.iconName)
+                .font(.system(size: 64))
+                .foregroundStyle(attachment.type.displayColor)
+
+            Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
+                .font(.title3).bold()
+
+            Text(attachment.type.rawValue)
+                .font(.subheadline).foregroundStyle(.secondary)
+
+            if hSize == .compact {
+                // Vertical layout for iPhone
+                VStack(spacing: 12) {
+                    attachmentActionButtons
+                }
+            } else {
+                HStack(spacing: 16) {
+                    attachmentActionButtons
+                }
+            }
+
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showQuickLook) {
+            if let url = attachment.fileURL {
+                QuickLookPreview(url: url)
+            } else {
+                Text("No file URL available.")
+                    .padding()
+            }
+        }
+        .alert("Delete Attachment?", isPresented: $showDeleteConfirm) {
+            Button("Delete", role: .destructive) {
+                onDelete()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete \"\(attachment.filename.isEmpty ? "this attachment" : attachment.filename)\". This cannot be undone.")
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentActionButtons: some View {
+        Button {
+            showQuickLook = true
+        } label: {
+            Label("Preview", systemImage: "eye")
+                .frame(minWidth: 100)
+        }
+        .buttonStyle(.borderedProminent)
+
+        Button {
+            shareAttachment()
+        } label: {
+            Label("Share", systemImage: "square.and.arrow.up")
+                .frame(minWidth: 100)
+        }
+        .buttonStyle(.bordered)
+
+        Button {
+            printAttachment()
+        } label: {
+            Label("Print", systemImage: "printer")
+                .frame(minWidth: 100)
+        }
+        .buttonStyle(.bordered)
+
+        Button(role: .destructive) {
+            showDeleteConfirm = true
+        } label: {
+            Label("Delete", systemImage: "trash")
+                .frame(minWidth: 100)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private func shareAttachment() {
+        guard let url = attachment.fileURL else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            SharePrintPresenter.share(items: [url])
+        }
+    }
+
+    private func printAttachment() {
+        guard let url = attachment.fileURL else { return }
+        SharePrintPresenter.printURL(url, jobName: attachment.filename)
+    }
+}
+
+// MARK: - AttachmentType UI helpers
+
+private extension AttachmentType {
+    var iconName: String {
+        switch self {
+        case .radiology: return "photo.fill"
+        case .laboratory: return "drop.triangle.fill"
+        case .eeg: return "waveform.path.ecg"
+        case .medicalReport: return "doc.text.fill"
+        case .other: return "paperclip"
+        }
+    }
+
+    var displayColor: Color {
+        switch self {
+        case .radiology: return .blue
+        case .laboratory: return .red
+        case .eeg: return .purple
+        case .medicalReport: return .orange
+        case .other: return .gray
+        }
+    }
+}

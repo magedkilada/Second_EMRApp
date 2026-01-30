@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		4C8349BA2F26C8750012B150 /* text.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4C8349B92F26C8750012B150 /* text.txt */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		4C2B79EE2EEE153800CEDF91 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		4C2B79E02EEE153700CEDF91 /* Second_EMRApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Second_EMRApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4C2B79ED2EEE153800CEDF91 /* Second_EMRAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Second_EMRAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4C2B79F72EEE153800CEDF91 /* Second_EMRAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Second_EMRAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4C8349B92F26C8750012B150 /* text.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = text.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +80,7 @@
 		4C2B79D72EEE153700CEDF91 = {
 			isa = PBXGroup;
 			children = (
+				4C8349B92F26C8750012B150 /* text.txt */,
 				4C2B79E22EEE153700CEDF91 /* Second_EMRApp */,
 				4C2B79F02EEE153800CEDF91 /* Second_EMRAppTests */,
 				4C2B79FA2EEE153800CEDF91 /* Second_EMRAppUITests */,
@@ -212,6 +218,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C8349BA2F26C8750012B150 /* text.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

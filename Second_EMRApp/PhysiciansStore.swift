@@ -1,93 +1,122 @@
+//
+//  PhysiciansStore.swift
+//  Second_EMRApp
+//
+
 import Foundation
-import SwiftUI
-import Combine   // ✅ REQUIRED
+import Combine
 
-// MARK: - Model
+public struct Physician: Identifiable, Codable, Hashable {
+    public var id: UUID = UUID()
+    public var name: String
+    public var specialty: String
+    public var clinic: String
+    public var phone: String
+    public var email: String
 
-struct Physician: Identifiable, Codable, Hashable {
-    var id: UUID = UUID()
-    var name: String
-    var specialty: String
-    var clinic: String
+    // Soft delete (per your rule)
+    public var isDeleted: Bool = false
 
-    // ✅ ADD THIS
-    var fullName: String {
-        name
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        specialty: String = "",
+        clinic: String = "",
+        phone: String = "",
+        email: String = "",
+        isDeleted: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.specialty = specialty
+        self.clinic = clinic
+        self.phone = phone
+        self.email = email
+        self.isDeleted = isDeleted
+    }
+
+    public var displayName: String {
+        specialty.isEmpty ? name : "\(name) • \(specialty)"
     }
 }
 
-// MARK: - Store
-
 @MainActor
-final class PhysiciansStore: ObservableObject {
+public final class PhysiciansStore: ObservableObject {
 
-    @Published var physicians: [Physician] = []
-    @Published var selectedPhysicianID: UUID? = nil
-    // Put this inside PhysiciansStore class (below @Published vars)
-    public var selectedPhysicianName: String? {
-        physicians.first(where: { $0.id == selectedPhysicianID })?.name
-    }
-    public var selectedPhysicianDisplay: String {
-        guard let p = physicians.first(where: { $0.id == selectedPhysicianID }) else { return "—" }
-        return p.specialty.isEmpty ? p.name : "\(p.name) • \(p.specialty)"
-    }
-    
-    
+    @Published public var physicians: [Physician] = []
+    @Published public var selectedPhysicianID: UUID? = nil
 
-    private let physiciansKey = "physicians.json"
-    private let selectedIDKey = "physician.selectedID"
+    private let physiciansKey = "physicians_data_v2"
+    private let selectedIDKey = "physician_selected_id_v2"
 
-    init() {
+    public init() {
         load()
+
         if physicians.isEmpty {
-            // Default physician (optional)
-            let p = Physician(name: "Attending Physician", specialty: "Neurosurgery", clinic: "")
-            physicians = [p]
-            selectedPhysicianID = p.id
+            let def = Physician(
+                name: "Attending Neurosurgeon",
+                specialty: "Neurosurgery",
+                clinic: "Main Hospital"
+            )
+            physicians = [def]
+            selectedPhysicianID = def.id
             save()
         } else if selectedPhysicianID == nil {
-            selectedPhysicianID = physicians.first?.id
+            selectedPhysicianID = physicians.first(where: { !$0.isDeleted })?.id
         }
     }
 
-    var selectedPhysician: Physician? {
+    // MARK: - Derived
+    public var activePhysicians: [Physician] {
+        physicians.filter { !$0.isDeleted }
+    }
+
+    public var selectedPhysician: Physician? {
         guard let id = selectedPhysicianID else { return nil }
-        return physicians.first(where: { $0.id == id })
+        return physicians.first(where: { $0.id == id && !$0.isDeleted })
     }
 
-    func add(_ p: Physician) {
-        physicians.insert(p, at: 0)
-        selectedPhysicianID = p.id
+    // MARK: - CRUD
+    public func add(_ physician: Physician) {
+        physicians.insert(physician, at: 0)
+        selectedPhysicianID = physician.id
         save()
     }
 
-    func delete(id: UUID) {
-        physicians.removeAll(where: { $0.id == id })
+    public func update(_ physician: Physician) {
+        guard let idx = physicians.firstIndex(where: { $0.id == physician.id }) else { return }
+        physicians[idx] = physician
+        save()
+    }
+
+    // ✅ Soft delete (your rule)
+    public func softDelete(_ id: UUID) {
+        guard let idx = physicians.firstIndex(where: { $0.id == id }) else { return }
+        physicians[idx].isDeleted = true
         if selectedPhysicianID == id {
-            selectedPhysicianID = physicians.first?.id
+            selectedPhysicianID = activePhysicians.first?.id
         }
         save()
     }
 
-    func save() {
-        do {
-            let data = try JSONEncoder().encode(physicians)
-            UserDefaults.standard.set(data, forKey: physiciansKey)
-
-            if let id = selectedPhysicianID {
-                UserDefaults.standard.set(id.uuidString, forKey: selectedIDKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: selectedIDKey)
-            }
-        } catch {
-            print("PhysiciansStore save failed:", error)
+    public func restore(_ id: UUID) {
+        guard let idx = physicians.firstIndex(where: { $0.id == id }) else { return }
+        physicians[idx].isDeleted = false
+        if selectedPhysicianID == nil {
+            selectedPhysicianID = id
         }
+        save()
     }
-    
-    func update(_ p: Physician) {
-        if let idx = physicians.firstIndex(where: { $0.id == p.id }) {
-            physicians[idx] = p
-            save()
+
+    // MARK: - Persistence
+    public func save() {
+        if let data = try? JSONEncoder().encode(physicians) {
+            UserDefaults.standard.set(data, forKey: physiciansKey)
+        }
+        if let id = selectedPhysicianID {
+            UserDefaults.standard.set(id.uuidString, forKey: selectedIDKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: selectedIDKey)
         }
     }
 
@@ -95,15 +124,11 @@ final class PhysiciansStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: physiciansKey),
            let decoded = try? JSONDecoder().decode([Physician].self, from: data) {
             physicians = decoded
-        } else {
-            physicians = []
         }
-
         if let s = UserDefaults.standard.string(forKey: selectedIDKey),
            let id = UUID(uuidString: s) {
             selectedPhysicianID = id
-        } else {
-            selectedPhysicianID = nil
         }
     }
 }
+

@@ -7,172 +7,184 @@ import SwiftUI
 
 struct ContentView: View {
 
+    // MARK: - Environment
     @EnvironmentObject private var store: EMRStore
     @EnvironmentObject private var physicians: PhysiciansStore
-
     @Environment(\.horizontalSizeClass) private var hSize
-    private var isPhone: Bool { hSize == .compact }
 
-    // MARK: - Tabs (detail)
-    enum WorkspaceTab: String, CaseIterable, Identifiable {
+    // MARK: - UI State
+    @State private var patientSearchText: String = ""
+    @State private var activeTab: WorkspaceTab = .demographics
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    enum WorkspaceTab: String, CaseIterable {
         case demographics = "Demographics"
-        case records = "Medical Records"
-        var id: String { rawValue }
+        case medicalRecords = "Medical Records"
+        case references = "References"
+
+        var icon: String {
+            switch self {
+            case .demographics: return "person.text.rectangle"
+            case .medicalRecords: return "doc.text.fill"
+            case .references: return "books.vertical.fill"
+            }
+        }
     }
 
-    @State private var tab: WorkspaceTab = .demographics
-
-    // MARK: - Delete UI
-    @State private var confirmDeletePatientID: UUID? = nil
-
-    // MARK: - Selected patient helpers
-    private var selectedPatientIndex: Int? {
-        guard let id = store.selectedPatientID else { return nil }
-        return store.patients.firstIndex(where: { $0.id == id })
-    }
-
+    // MARK: - Derived
     private var selectedPatient: Patient? {
-        guard let idx = selectedPatientIndex else { return nil }
-        return store.patients[idx]
+        guard let id = store.selectedPatientID else { return nil }
+        return store.patients.first(where: { $0.id == id && !$0.isDeleted })
+    }
+
+    private var isCompact: Bool {
+        hSize == .compact
     }
 
     // MARK: - Body
     var body: some View {
-        NavigationSplitView {
-            sidebar
+        if isCompact {
+            compactLayout
+        } else {
+            regularLayout
+        }
+    }
+
+    // MARK: - Regular (iPad) Layout
+    private var regularLayout: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            LeftSidebarView(searchText: $patientSearchText)
+                .environmentObject(store)
+                .environmentObject(physicians)
+                .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
         } detail: {
-            detail
-        }
-    }
-
-    // MARK: - Sidebar
-
-    private var sidebar: some View {
-        List(selection: $store.selectedPatientID) {
-
-            // If you have your own attending physician / backup views, you can re-add them here.
-            // Keeping sidebar clean for stability.
-
-            Section("Patients") {
-                ForEach(store.patients) { p in
-                    Text(patientDisplayName(p))
-                        .tag(p.id as UUID?)
+            if let patient = selectedPatient {
+                VStack(spacing: 0) {
+                    topTabBar
+                    Divider()
+                    tabContent(patient: patient)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-
-                Button {
-                    addPatient()
-                } label: {
-                    Label("Add Patient", systemImage: "person.badge.plus")
+                .onChange(of: store.selectedPatientID) { _, _ in
+                    activeTab = .demographics
                 }
-            }
-        }
-        .navigationTitle("Neurosurgery EMR")
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    addPatient()
-                } label: {
-                    Image(systemName: "plus")
-                }
-
-                Button(role: .destructive) {
-                    if let id = store.selectedPatientID {
-                        confirmDeletePatientID = id
-                    }
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .disabled(store.selectedPatientID == nil)
-            }
-        }
-        .alert("Delete patient?", isPresented: Binding(
-            get: { confirmDeletePatientID != nil },
-            set: { if !$0 { confirmDeletePatientID = nil } }
-        )) {
-            Button("Cancel", role: .cancel) { confirmDeletePatientID = nil }
-            Button("Delete", role: .destructive) {
-                if let id = confirmDeletePatientID {
-                    deletePatient(id)
-                }
-                confirmDeletePatientID = nil
-            }
-        } message: {
-            Text("This will remove the patient and their data from this device.")
-        }
-    }
-
-    // MARK: - Detail
-
-    private var detail: some View {
-        Group {
-            if let idx = selectedPatientIndex {
-                let p = store.patients[idx]
-
-                VStack(spacing: 12) {
-
-                    Picker("", selection: $tab) {
-                        ForEach(WorkspaceTab.allCases) { t in
-                            Text(t.rawValue).tag(t)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.top, 6)
-                    .padding(.horizontal)
-
-                    Group {
-                        switch tab {
-                        case .demographics:
-                            PatientDemographicsView(
-                                patient: Binding(
-                                    get: { store.patients[idx] },
-                                    set: { store.patients[idx] = $0 }
-                                ),
-                                onSave: {
-                                    store.savePatient(store.patients[idx])   // <-- this calls savePatients() internally
-                                },
-                                onRequestDelete: {
-                                    confirmDeletePatientID = store.patients[idx].id
-                                }
-                            )
-                            .padding(.horizontal)
-
-                        case .records:
-                            RecordsWorkspaceView(patient: p)
-                                .padding(.horizontal, isPhone ? 0 : 8)
-                                .id(p.id) // helps refresh when switching patients
-                        }
-                    }
-                }
-                .navigationTitle(patientDisplayName(p))
-                .navigationBarTitleDisplayMode(.inline)
-
             } else {
-                ContentUnavailableView("Select a patient", systemImage: "person.text.rectangle")
+                emptyPatientState
             }
         }
+        .navigationSplitViewStyle(.balanced)
     }
 
-    // MARK: - Actions
-
-    private func addPatient() {
-        let p = store.addNewPatient()      // <-- this calls savePatients() internally
-        store.selectedPatientID = p.id
-    }
-    private func deletePatient(_ id: UUID) {
-        store.softDeletePatient(id)   // (no label if your method is softDeletePatient(_ id:))
-        if store.selectedPatientID == id {
-            store.selectedPatientID = store.patients.first(where: { !$0.isDeleted })?.id
+    // MARK: - Compact (iPhone) Layout
+    private var compactLayout: some View {
+        NavigationStack {
+            LeftSidebarView(searchText: $patientSearchText)
+                .environmentObject(store)
+                .environmentObject(physicians)
+                .navigationDestination(item: $store.selectedPatientID) { _ in
+                    if let patient = selectedPatient {
+                        VStack(spacing: 0) {
+                            compactTabBar
+                            Divider()
+                            tabContent(patient: patient)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        .navigationTitle(patient.nameEnglish)
+                        .inlineNavigationTitle()
+                    }
+                }
         }
     }
 
-        
-        // MARK: - Display
-        
-        private func patientDisplayName(_ p: Patient) -> String {
-            let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !en.isEmpty { return en }
-            let ar = p.nameArabic.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !ar.isEmpty { return ar }
-            return "Patient"
+    // MARK: - Shared tab content
+    @ViewBuilder
+    private func tabContent(patient: Patient) -> some View {
+        switch activeTab {
+        case .demographics:
+            PatientSummaryDashboard(patient: patient)
+                .environmentObject(store)
+                .environmentObject(physicians)
+        case .medicalRecords:
+            RecordsWorkspaceView(patient: patient)
+                .environmentObject(store)
+                .environmentObject(physicians)
+        case .references:
+            ReferencesView()
         }
     }
+
+    // MARK: - Top Tab Bar (iPad)
+    private var topTabBar: some View {
+        HStack(spacing: 8) {
+            ForEach(WorkspaceTab.allCases, id: \.self) { tab in
+                tabButton(tab: tab)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color.systemGroupedBg)
+    }
+
+    // MARK: - Compact Tab Bar (iPhone) — icon-only to save space
+    private var compactTabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(WorkspaceTab.allCases, id: \.self) { tab in
+                Button {
+                    activeTab = tab
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 18))
+                        Text(tab.rawValue)
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(activeTab == tab ? Color.blue : Color.secondarySystemGroupedBg)
+                    .foregroundStyle(activeTab == tab ? .white : .primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.systemGroupedBg)
+    }
+
+    private func tabButton(tab: WorkspaceTab) -> some View {
+        Button {
+            activeTab = tab
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: tab.icon)
+                Text(tab.rawValue).fontWeight(.semibold)
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(activeTab == tab ? Color.blue : Color.secondarySystemGroupedBg)
+            .foregroundStyle(activeTab == tab ? .white : .primary)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Empty State
+    private var emptyPatientState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "person.crop.circle.badge.plus")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+
+            Text("Select a patient")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+
+            Text("Choose a patient from the left sidebar to begin.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}

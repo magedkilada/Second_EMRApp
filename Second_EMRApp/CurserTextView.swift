@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// A SwiftUI text view that exposes the current cursor/selection range,
 /// so you can insert text exactly where the user clicked.

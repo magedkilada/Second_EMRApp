@@ -66,7 +66,7 @@ struct AutoBackupSettingsView: View {
         }
         .navigationTitle("Auto-backup")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
             }
         }

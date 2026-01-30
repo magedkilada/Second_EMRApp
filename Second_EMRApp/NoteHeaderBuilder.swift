@@ -1,51 +1,58 @@
+//
+//  NoteHeaderBuilder.swift
+//  Second_EMRApp
+//
+//  Compact header for printed / shared notes.
+//  Includes: patient name, MRN, DOB, gender, phone
+//            physician name, clinic, phone, email
+//  Excludes: passport, national ID
+
 import Foundation
-
-// ✅ One place to map YOUR model field names to what the header needs.
-struct HeaderPatientFields {
-    var patientName: String
-    var mrn: String
-    var dob: Date?
-    var sex: String
-    var phone: String
-    var clinic: String
-}
-
-struct HeaderNoteFields {
-    var physician: String
-    var createdAt: Date
-    var updatedAt: Date
-}
 
 struct NoteHeaderBuilder {
 
-    static func formatDate(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f.string(from: date)
-    }
+    /// Compact header for print & share — fits ~6 lines at the top of the page.
+    static func compactHeader(
+        note: RecordNote,
+        patient: Patient,
+        physicianName: String,
+        clinicName: String,
+        physicianPhone: String?,
+        physicianEmail: String?
+    ) -> String {
 
-    static func headerText(patient: HeaderPatientFields, note: HeaderNoteFields) -> String {
+        let dob = patient.dob.formatted(date: .abbreviated, time: .omitted)
+        let age = patient.ageString ?? "—"
+        let date = note.updatedAt.formatted(date: .abbreviated, time: .shortened)
+
+        // Line 1: Note type + date
         var lines: [String] = []
+        lines.append("\(note.displayTitle.uppercased())  —  \(date)")
 
-        // ✅ Order you requested
-        lines.append("Patient: \(patient.patientName)")
-        if !patient.mrn.isEmpty { lines.append("MRN: \(patient.mrn)") }
+        // Line 2: Patient info (name | MRN | DOB/Age | Gender)
+        var patientParts: [String] = []
+        patientParts.append(patient.nameEnglish)
+        if !patient.mrn.isEmpty { patientParts.append("MRN: \(patient.mrn)") }
+        patientParts.append("DOB: \(dob) (\(age))")
+        patientParts.append(patient.gender.rawValue)
+        lines.append(patientParts.joined(separator: "  |  "))
 
-        if let dob = patient.dob {
-            let dobF = DateFormatter()
-            dobF.dateStyle = .medium
-            dobF.timeStyle = .none
-            lines.append("DOB: \(dobF.string(from: dob))")
-        } else {
-            lines.append("DOB: —")
+        // Line 3: Patient phone (if present)
+        if !patient.phone.isEmpty {
+            lines.append("Phone: \(patient.phone)")
         }
 
-        lines.append("Sex: \(patient.sex.isEmpty ? "—" : patient.sex)")
-        lines.append("Clinic: \(patient.clinic.isEmpty ? "—" : patient.clinic)")
-        lines.append("Physician: \(note.physician.isEmpty ? "—" : note.physician)")
-        lines.append("Note created: \(formatDate(note.createdAt))")
-        lines.append("Note updated: \(formatDate(note.updatedAt))")
+        // Line 4: Physician info
+        var physicianParts: [String] = []
+        physicianParts.append("Dr. \(physicianName)")
+        if !clinicName.isEmpty { physicianParts.append(clinicName) }
+        if let ph = physicianPhone, !ph.isEmpty { physicianParts.append(ph) }
+        if let em = physicianEmail, !em.isEmpty { physicianParts.append(em) }
+        lines.append(physicianParts.joined(separator: "  |  "))
+
+        // Separator
+        lines.append(String(repeating: "\u{2500}", count: 56))
+        lines.append("")
 
         return lines.joined(separator: "\n")
     }

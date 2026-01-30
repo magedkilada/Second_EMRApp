@@ -6,6 +6,7 @@
 import SwiftUI
 import QuickLook
 
+#if os(iOS)
 /// SwiftUI wrapper for iOS QuickLook preview.
 struct QuickLookPreview: UIViewControllerRepresentable {
 
@@ -18,7 +19,6 @@ struct QuickLookPreview: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {
-        // Update the URL in case it changes while the sheet is open
         context.coordinator.url = url
         uiViewController.reloadData()
     }
@@ -42,3 +42,26 @@ struct QuickLookPreview: UIViewControllerRepresentable {
         }
     }
 }
+
+#elseif os(macOS)
+/// macOS QuickLook placeholder — opens the file with the system viewer.
+struct QuickLookPreview: View {
+    let url: URL
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "eye")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text(url.lastPathComponent)
+                .font(.headline)
+            Button("Open in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+}
+#endif

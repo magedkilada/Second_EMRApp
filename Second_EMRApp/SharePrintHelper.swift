@@ -1,60 +1,98 @@
 import SwiftUI
-import UIKit
 import PDFKit
 
-// MARK: - Share Sheet (AirDrop / Files / Messages / Mail)
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
-struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-    var excludedActivityTypes: [UIActivity.ActivityType]? = nil
+// MARK: - Direct Presenters (platform-specific)
 
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        vc.excludedActivityTypes = excludedActivityTypes
+enum SharePrintPresenter {
 
-        // ✅ iPad: must set popover anchor, otherwise crash/blank weird behavior
-        if let pop = vc.popoverPresentationController {
-            pop.sourceView = UIApplication.shared.topMostViewController?.view
-            pop.sourceRect = CGRect(x: UIScreen.main.bounds.midX,
-                                    y: UIScreen.main.bounds.maxY - 80,
-                                    width: 0, height: 0)
-            pop.permittedArrowDirections = []
+    #if os(iOS)
+    static func share(items: [Any]) {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first(where: \.isKeyWindow),
+              let rootVC = window.rootViewController else { return }
+
+        var top = rootVC
+        while let presented = top.presentedViewController { top = presented }
+
+        let presentShare = { (presenter: UIViewController) in
+            let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            if let pop = vc.popoverPresentationController {
+                pop.sourceView = presenter.view
+                pop.sourceRect = CGRect(x: presenter.view.bounds.midX,
+                                        y: presenter.view.bounds.midY,
+                                        width: 0, height: 0)
+                pop.permittedArrowDirections = []
+            }
+            presenter.present(vc, animated: true)
         }
-        return vc
+
+        if top !== rootVC {
+            top.dismiss(animated: false) {
+                var newTop = rootVC
+                while let presented = newTop.presentedViewController { newTop = presented }
+                presentShare(newTop)
+            }
+        } else {
+            presentShare(top)
+        }
     }
 
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
-}
+    static func printURL(_ url: URL, jobName: String) {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first(where: \.isKeyWindow),
+              let rootVC = window.rootViewController else { return }
 
-import SwiftUI
-import UIKit
+        var top = rootVC
+        while let presented = top.presentedViewController { top = presented }
 
-// MARK: - Print Sheet (PDF / TXT)
-
-struct PrintSheet: UIViewControllerRepresentable {
-    let jobName: String
-    let fileURL: URL
-
-    func makeUIViewController(context: Context) -> UIViewController {
-        let vc = UIViewController()
-
-        DispatchQueue.main.async {
-            let printInfo = UIPrintInfo(dictionary: nil)
-            printInfo.jobName = jobName
-            printInfo.outputType = .general
-
+        let doPrint = {
             let controller = UIPrintInteractionController.shared
-            controller.printInfo = printInfo
-            controller.printingItem = fileURL
-
-            // ✅ iPad-safe presentation (NO popover access)
+            let info = UIPrintInfo(dictionary: nil)
+            info.jobName = jobName
+            info.outputType = .general
+            controller.printInfo = info
+            controller.printingItem = url
             controller.present(animated: true)
         }
 
-        return vc
+        if top !== rootVC {
+            top.dismiss(animated: false) { doPrint() }
+        } else {
+            doPrint()
+        }
     }
 
-    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+    #elseif os(macOS)
+    static func share(items: [Any]) {
+        guard let url = items.compactMap({ $0 as? URL }).first else { return }
+        let picker = NSSharingServicePicker(items: [url])
+        if let window = NSApp.keyWindow, let contentView = window.contentView {
+            let rect = CGRect(x: contentView.bounds.midX, y: contentView.bounds.midY, width: 0, height: 0)
+            picker.show(relativeTo: rect, of: contentView, preferredEdge: .minY)
+        }
+    }
+
+    static func printURL(_ url: URL, jobName: String) {
+        let printOp: NSPrintOperation?
+        if url.pathExtension.lowercased() == "pdf", let pdfDoc = PDFDocument(url: url) {
+            printOp = pdfDoc.printOperation(for: NSPrintInfo.shared, scalingMode: .pageScaleToFit, autoRotate: true)
+        } else if let text = try? String(contentsOf: url, encoding: .utf8) {
+            let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+            tv.string = text
+            printOp = NSPrintOperation(view: tv)
+        } else {
+            return
+        }
+        printOp?.jobTitle = jobName
+        printOp?.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
+    }
+    #endif
 }
 
 // MARK: - File Builders (Text -> TXT, Text -> PDF)
@@ -62,8 +100,9 @@ struct PrintSheet: UIViewControllerRepresentable {
 enum SharePrintBuilder {
 
     static func makeTXTFile(filename: String, text: String) -> URL? {
+        let safe = filename.replacingOccurrences(of: "/", with: "-")
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent(filename)
+            .appendingPathComponent(safe)
             .appendingPathExtension("txt")
         do {
             try text.data(using: .utf8)?.write(to: url, options: .atomic)
@@ -74,9 +113,10 @@ enum SharePrintBuilder {
     }
 
     static func makePDFFile(filename: String, title: String, body: String) -> URL? {
-        let pdfData = renderSimplePDF(title: title, body: body)
+        let safe = filename.replacingOccurrences(of: "/", with: "-")
+        let pdfData = renderMultiPagePDF(body: body)
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent(filename)
+            .appendingPathComponent(safe)
             .appendingPathExtension("pdf")
         do {
             try pdfData.write(to: url, options: .atomic)
@@ -86,48 +126,129 @@ enum SharePrintBuilder {
         }
     }
 
-    // Basic PDF renderer (fast, stable)
-    private static func renderSimplePDF(title: String, body: String) -> Data {
-        let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792) // US Letter @ 72dpi
-        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+    // MARK: - Multi-page PDF renderer
 
-        return renderer.pdfData { ctx in
-            ctx.beginPage()
+    private static func renderMultiPagePDF(body: String) -> Data {
+        let pageWidth: CGFloat = 612
+        let pageHeight: CGFloat = 792
+        let margin: CGFloat = 54
+        let contentWidth = pageWidth - margin * 2
+        let contentHeight = pageHeight - margin * 2
+        let pageRect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
 
-            let margin: CGFloat = 36
-            var y: CGFloat = margin
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 3
 
-            let titleFont = UIFont.boldSystemFont(ofSize: 18)
-            let bodyFont  = UIFont.systemFont(ofSize: 12)
+        #if os(iOS)
+        let headerFont = UIFont.boldSystemFont(ofSize: 10)
+        let bodyFont = UIFont.systemFont(ofSize: 11)
+        let separatorFont = UIFont.systemFont(ofSize: 6)
+        let grayColor: Any = UIColor.gray
+        #elseif os(macOS)
+        let headerFont = NSFont.boldSystemFont(ofSize: 10)
+        let bodyFont = NSFont.systemFont(ofSize: 11)
+        let separatorFont = NSFont.systemFont(ofSize: 6)
+        let grayColor: Any = NSColor.gray
+        #endif
 
-            let titleAttr: [NSAttributedString.Key: Any] = [.font: titleFont]
-            let bodyAttr:  [NSAttributedString.Key: Any] = [.font: bodyFont]
+        let separator = String(repeating: "\u{2500}", count: 56)
+        let parts = body.components(separatedBy: separator)
 
-            let titleStr = NSAttributedString(string: title + "\n\n", attributes: titleAttr)
-            let bodyStr  = NSAttributedString(string: body, attributes: bodyAttr)
+        let fullAttr = NSMutableAttributedString()
 
-            let titleSize = titleStr.boundingRect(
-                with: CGSize(width: pageRect.width - margin*2, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading],
-                context: nil
-            )
-            titleStr.draw(in: CGRect(x: margin, y: y, width: pageRect.width - margin*2, height: titleSize.height))
-            y += titleSize.height
-
-            let bodyRect = CGRect(x: margin, y: y, width: pageRect.width - margin*2, height: pageRect.height - y - margin)
-            bodyStr.draw(with: bodyRect, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+        if parts.count >= 2 {
+            let headerText = parts[0]
+            fullAttr.append(NSAttributedString(
+                string: headerText,
+                attributes: [.font: headerFont, .paragraphStyle: style]
+            ))
+            fullAttr.append(NSAttributedString(
+                string: String(repeating: "\u{2500}", count: 72) + "\n",
+                attributes: [.font: separatorFont, .foregroundColor: grayColor]
+            ))
+            let bodyText = parts.dropFirst().joined(separator: separator)
+            fullAttr.append(NSAttributedString(
+                string: bodyText,
+                attributes: [.font: bodyFont, .paragraphStyle: style]
+            ))
+        } else {
+            fullAttr.append(NSAttributedString(
+                string: body,
+                attributes: [.font: bodyFont, .paragraphStyle: style]
+            ))
         }
-    }
-}
 
-// MARK: - UIKit convenience: top view controller for popovers
+        let storage = NSTextStorage(attributedString: fullAttr)
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
 
-private extension UIApplication {
-    var topMostViewController: UIViewController? {
-        guard let scene = connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first(where: { $0.isKeyWindow }),
-              var top = window.rootViewController else { return nil }
-        while let presented = top.presentedViewController { top = presented }
-        return top
+        #if os(iOS)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        return renderer.pdfData { ctx in
+            var done = false
+            let totalGlyphs = layoutManager.numberOfGlyphs
+
+            while !done {
+                let textContainer = NSTextContainer(size: CGSize(width: contentWidth, height: contentHeight))
+                textContainer.lineFragmentPadding = 0
+                layoutManager.addTextContainer(textContainer)
+
+                ctx.beginPage()
+
+                let glyphRange = layoutManager.glyphRange(for: textContainer)
+
+                if glyphRange.length == 0 {
+                    done = true
+                } else {
+                    let origin = CGPoint(x: margin, y: margin)
+                    layoutManager.drawBackground(forGlyphRange: glyphRange, at: origin)
+                    layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: origin)
+
+                    if NSMaxRange(glyphRange) >= totalGlyphs {
+                        done = true
+                    }
+                }
+            }
+        }
+        #elseif os(macOS)
+        let pdfData = NSMutableData()
+        var mediaBox = pageRect
+        guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
+              let cgContext = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+            return Data()
+        }
+
+        var done = false
+        let totalGlyphs = layoutManager.numberOfGlyphs
+
+        while !done {
+            let textContainer = NSTextContainer(size: CGSize(width: contentWidth, height: contentHeight))
+            textContainer.lineFragmentPadding = 0
+            layoutManager.addTextContainer(textContainer)
+
+            cgContext.beginPDFPage(nil)
+
+            let glyphRange = layoutManager.glyphRange(for: textContainer)
+
+            if glyphRange.length == 0 {
+                done = true
+            } else {
+                let nsContext = NSGraphicsContext(cgContext: cgContext, flipped: false)
+                NSGraphicsContext.current = nsContext
+                let origin = CGPoint(x: margin, y: margin)
+                layoutManager.drawBackground(forGlyphRange: glyphRange, at: origin)
+                layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: origin)
+
+                if NSMaxRange(glyphRange) >= totalGlyphs {
+                    done = true
+                }
+            }
+
+            cgContext.endPDFPage()
+        }
+
+        cgContext.closePDF()
+        return pdfData as Data
+        #endif
     }
 }
