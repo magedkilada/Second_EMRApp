@@ -12,7 +12,6 @@ struct ReferencesView: View {
     @State private var showFileImporter = false
     @State private var showPhotoPicker = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
-
     private var isCompact: Bool { hSize == .compact }
 
     private var filteredItems: [ReferenceItem] {
@@ -96,53 +95,64 @@ struct ReferencesView: View {
     }
 
     private func compactDetailView(_ item: ReferenceItem) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title).font(.title2).bold()
-                        Text(item.category.rawValue)
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button {
-                        var toggled = item
-                        toggled.isFavorite.toggle()
-                        refStore.update(toggled)
-                    } label: {
-                        Image(systemName: item.isFavorite ? "star.fill" : "star")
-                            .font(.title3)
-                            .foregroundStyle(item.isFavorite ? .yellow : .secondary)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button { editingItem = item } label: {
-                        Image(systemName: "pencil.circle.fill")
-                            .font(.title3).foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        refStore.delete(item.id)
-                        selectedItemID = nil
-                    } label: {
-                        Image(systemName: "trash.circle.fill")
-                            .font(.title3).foregroundStyle(.red)
-                    }
-                    .buttonStyle(.plain)
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title).font(.title2).bold()
+                    Text(item.category.rawValue)
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
-
-                Divider()
-
-                if let fileURL = item.fileURL {
-                    filePreview(url: fileURL)
+                Spacer()
+                Button {
+                    var toggled = item
+                    toggled.isFavorite.toggle()
+                    refStore.update(toggled)
+                } label: {
+                    Image(systemName: item.isFavorite ? "star.fill" : "star")
+                        .font(.title3)
+                        .foregroundStyle(item.isFavorite ? .yellow : .secondary)
                 }
+                .buttonStyle(.plain)
 
-                Text(item.body)
-                    .font(.body)
-                    .textSelection(.enabled)
+                Button { editingItem = item } label: {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.title3).foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    refStore.delete(item.id)
+                    selectedItemID = nil
+                } label: {
+                    Image(systemName: "trash.circle.fill")
+                        .font(.title3).foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
             }
             .padding()
+
+            Divider()
+
+            // Content
+            if let fileURL = item.fileURL,
+               !["jpg", "jpeg", "png", "heic", "gif", "webp"].contains(fileURL.pathExtension.lowercased()) {
+                // PDF fills entire remaining space
+                PDFKitView(url: fileURL)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let fileURL = item.fileURL {
+                            filePreview(url: fileURL)
+                        }
+
+                        Text(item.body)
+                            .font(.body)
+                            .textSelection(.enabled)
+                    }
+                    .padding()
+                }
+            }
         }
         .background(Color.secondarySystemGroupedBg)
         .navigationTitle(item.title)
@@ -263,54 +273,65 @@ struct ReferencesView: View {
         Group {
             if let id = selectedItemID,
                let item = refStore.items.first(where: { $0.id == id }) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title).font(.title2).bold()
-                                Text(item.category.rawValue)
-                                    .font(.subheadline).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-
-                            Button {
-                                var toggled = item
-                                toggled.isFavorite.toggle()
-                                refStore.update(toggled)
-                            } label: {
-                                Image(systemName: item.isFavorite ? "star.fill" : "star")
-                                    .font(.title3)
-                                    .foregroundStyle(item.isFavorite ? .yellow : .secondary)
-                            }
-                            .buttonStyle(.plain)
-
-                            Button { editingItem = item } label: {
-                                Image(systemName: "pencil.circle.fill")
-                                    .font(.title3).foregroundStyle(.blue)
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                refStore.delete(item.id)
-                                selectedItemID = nil
-                            } label: {
-                                Image(systemName: "trash.circle.fill")
-                                    .font(.title3).foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
+                VStack(spacing: 0) {
+                    // Header bar — always visible
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.title).font(.title2).bold()
+                            Text(item.category.rawValue)
+                                .font(.subheadline).foregroundStyle(.secondary)
                         }
+                        Spacer()
 
-                        Divider()
-
-                        if let fileURL = item.fileURL {
-                            filePreview(url: fileURL)
+                        Button {
+                            var toggled = item
+                            toggled.isFavorite.toggle()
+                            refStore.update(toggled)
+                        } label: {
+                            Image(systemName: item.isFavorite ? "star.fill" : "star")
+                                .font(.title3)
+                                .foregroundStyle(item.isFavorite ? .yellow : .secondary)
                         }
+                        .buttonStyle(.plain)
 
-                        Text(item.body)
-                            .font(.body)
-                            .textSelection(.enabled)
+                        Button { editingItem = item } label: {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.title3).foregroundStyle(.blue)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            refStore.delete(item.id)
+                            selectedItemID = nil
+                        } label: {
+                            Image(systemName: "trash.circle.fill")
+                                .font(.title3).foregroundStyle(.red)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding()
+
+                    Divider()
+
+                    // Content — PDF fills the panel; text uses ScrollView
+                    if let fileURL = item.fileURL,
+                       !["jpg", "jpeg", "png", "heic", "gif", "webp"].contains(fileURL.pathExtension.lowercased()) {
+                        // PDF: fill remaining space (PDFView has its own scroll)
+                        PDFKitView(url: fileURL)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 16) {
+                                if let fileURL = item.fileURL {
+                                    filePreview(url: fileURL)
+                                }
+
+                                Text(item.body)
+                                    .font(.body)
+                                    .textSelection(.enabled)
+                            }
+                            .padding()
+                        }
+                    }
                 }
             } else {
                 VStack(spacing: 10) {
@@ -333,11 +354,7 @@ struct ReferencesView: View {
     @ViewBuilder
     private func filePreview(url: URL) -> some View {
         let ext = url.pathExtension.lowercased()
-        if ext == "pdf" {
-            QuickLookPreview(url: url)
-                .frame(minHeight: 400)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else if ["jpg", "jpeg", "png", "heic", "gif", "webp"].contains(ext) {
+        if ["jpg", "jpeg", "png", "heic", "gif", "webp"].contains(ext) {
             #if os(iOS)
             if let data = try? Data(contentsOf: url),
                let uiImage = UIImage(data: data) {
@@ -357,9 +374,14 @@ struct ReferencesView: View {
             }
             #endif
         } else {
-            // Generic file — show open button
-            QuickLookPreview(url: url)
-                .frame(minHeight: 200)
+            // PDF or other document — render inline using PDFKit
+            PDFKitView(url: url)
+                .frame(minHeight: 500, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
         }
     }
 

@@ -4,64 +4,54 @@
 //
 
 import SwiftUI
-import QuickLook
+import PDFKit
 
+/// Cross-platform PDF viewer using PDFKit — works inline on iOS, iPadOS, and macOS.
 #if os(iOS)
-/// SwiftUI wrapper for iOS QuickLook preview.
-struct QuickLookPreview: UIViewControllerRepresentable {
-
+struct PDFKitView: UIViewRepresentable {
     let url: URL
 
-    func makeUIViewController(context: Context) -> QLPreviewController {
-        let vc = QLPreviewController()
-        vc.dataSource = context.coordinator
-        return vc
+    func makeUIView(context: Context) -> PDFView {
+        let pdfView = PDFView()
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.displayDirection = .vertical
+        pdfView.document = PDFDocument(url: url)
+        return pdfView
     }
 
-    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {
-        context.coordinator.url = url
-        uiViewController.reloadData()
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(url: url)
-    }
-
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        var url: URL
-
-        init(url: URL) {
-            self.url = url
-        }
-
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-
-        func previewController(_ controller: QLPreviewController,
-                               previewItemAt index: Int) -> QLPreviewItem {
-            url as NSURL
+    func updateUIView(_ pdfView: PDFView, context: Context) {
+        if pdfView.document?.documentURL != url {
+            pdfView.document = PDFDocument(url: url)
         }
     }
 }
-
 #elseif os(macOS)
-/// macOS QuickLook placeholder — opens the file with the system viewer.
+struct PDFKitView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> PDFView {
+        let pdfView = PDFView()
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.displayDirection = .vertical
+        pdfView.document = PDFDocument(url: url)
+        return pdfView
+    }
+
+    func updateNSView(_ pdfView: PDFView, context: Context) {
+        if pdfView.document?.documentURL != url {
+            pdfView.document = PDFDocument(url: url)
+        }
+    }
+}
+#endif
+
+/// Legacy name kept for any other callers — now just wraps PDFKitView.
 struct QuickLookPreview: View {
     let url: URL
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "eye")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text(url.lastPathComponent)
-                .font(.headline)
-            Button("Open in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+        PDFKitView(url: url)
     }
 }
-#endif
