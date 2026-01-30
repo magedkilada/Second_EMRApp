@@ -3,8 +3,12 @@ import SwiftUI
 struct PatientSummaryDashboard: View {
     let patient: Patient
     @EnvironmentObject private var store: EMRStore
+    @StateObject private var appointmentStore = AppointmentStore()
     @State private var showEditDemographics = false
     @State private var workingVitals: SmartVitalsEntry?
+    @State private var scheduleDate: Date = Date()
+    @State private var showAddAppointment = false
+    @State private var selectedTimeSlot: Date?
 
     // MARK: - Computed Properties
     private var notesCount: Int {
@@ -36,10 +40,25 @@ struct PatientSummaryDashboard: View {
                 }
 
                 actionButtons
+
+                clinicScheduleSection
             }
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showAddAppointment) {
+            if let timeSlot = selectedTimeSlot {
+                AddAppointmentView(
+                    timeSlot: timeSlot,
+                    onSave: { appointment in
+                        appointmentStore.add(appointment)
+                        showAddAppointment = false
+                    },
+                    initialPatientID: patient.id
+                )
+                .environmentObject(store)
+            }
+        }
         .sheet(isPresented: $showEditDemographics) {
             NavigationStack {
                 PatientDemographicsView(
@@ -198,6 +217,123 @@ struct PatientSummaryDashboard: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 12)
             }
             .buttonStyle(.bordered)
+        }
+    }
+
+    // MARK: - Clinic Schedule Section
+    private var clinicScheduleSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Clinic Schedule", systemImage: "calendar")
+                        .font(.headline)
+                    Spacer()
+                    Button("Today") { scheduleDate = Date() }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                }
+
+                DatePicker("", selection: $scheduleDate, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .labelsHidden()
+
+                Divider()
+
+                // Time slots list
+                let slots = generateTimeSlots(for: scheduleDate)
+                let dayAppointments = appointmentsForDay(scheduleDate)
+
+                ForEach(slots, id: \.self) { slot in
+                    let apt = dayAppointments.first(where: {
+                        Calendar.current.isDate($0.startTime, equalTo: slot, toGranularity: .minute)
+                    })
+
+                    scheduleSlotRow(slot: slot, appointment: apt)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func scheduleSlotRow(slot: Date, appointment: Appointment?) -> some View {
+        Button {
+            selectedTimeSlot = slot
+            showAddAppointment = true
+        } label: {
+            HStack(spacing: 12) {
+                Text(slot, style: .time)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 60, alignment: .leading)
+                    .foregroundStyle(.secondary)
+
+                if let apt = appointment {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 8, height: 8)
+
+                        if let pid = apt.patientID,
+                           let p = store.patients.first(where: { $0.id == pid }) {
+                            Text(p.nameEnglish.isEmpty ? "Unnamed" : p.nameEnglish)
+                                .font(.caption).bold()
+                        } else {
+                            Text("Reserved").font(.caption).italic()
+                        }
+
+                        if !apt.notes.isEmpty {
+                            Text("– \(apt.notes)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        Text("\(apt.durationMinutes)m")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            appointmentStore.delete(id: apt.id)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.red.opacity(0.7))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(Color.blue.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                } else {
+                    Spacer()
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func generateTimeSlots(for date: Date) -> [Date] {
+        var slots: [Date] = []
+        let calendar = Calendar.current
+        let baseDate = calendar.startOfDay(for: date)
+
+        for hour in 8..<24 {
+            for minute in stride(from: 0, to: 60, by: 15) {
+                if let slot = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: baseDate) {
+                    slots.append(slot)
+                }
+            }
+        }
+        return slots
+    }
+
+    private func appointmentsForDay(_ date: Date) -> [Appointment] {
+        let calendar = Calendar.current
+        return appointmentStore.appointments.filter {
+            calendar.isDate($0.startTime, inSameDayAs: date)
         }
     }
 

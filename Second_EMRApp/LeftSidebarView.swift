@@ -21,6 +21,7 @@ struct LeftSidebarView: View {
 
     // Local state for new patient sheet
     @State private var newPatient = Patient()
+    @State private var showScheduleForPatient: Patient?
 
     private var selectedPatient: Patient? {
         guard let id = store.selectedPatientID else { return nil }
@@ -78,6 +79,9 @@ struct LeftSidebarView: View {
                                 },
                                 onDelete: {
                                     attemptDeletePatient(patient)
+                                },
+                                onSchedule: {
+                                    showScheduleForPatient = patient
                                 }
                             )
                         }
@@ -147,6 +151,10 @@ struct LeftSidebarView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("\(cannotDeletePatientName) has \(cannotDeleteNoteCount) medical record(s). Please delete all medical records before deleting the patient.")
+        }
+        .sheet(item: $showScheduleForPatient) { patient in
+            ScheduleView()
+                .environmentObject(store)
         }
         .alert("Soft Delete Physician?", isPresented: $showDeletePhysicianAlert) {
             Button("Delete", role: .destructive) {
@@ -283,6 +291,7 @@ struct PatientRowButton: View {
     let isSelected: Bool
     let onTap: () -> Void
     let onDelete: () -> Void
+    var onSchedule: (() -> Void)? = nil
 
     var body: some View {
         Button(action: onTap) {
@@ -324,6 +333,11 @@ struct PatientRowButton: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            if let onSchedule = onSchedule {
+                Button { onSchedule() } label: {
+                    Label("Add to Schedule", systemImage: "calendar.badge.plus")
+                }
+            }
             Button(role: .destructive) { onDelete() } label: {
                 Label("Delete (Soft)", systemImage: "trash")
             }

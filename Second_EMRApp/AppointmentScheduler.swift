@@ -68,8 +68,8 @@ struct ScheduleView: View {
         let calendar = Calendar.current
         let baseDate = calendar.startOfDay(for: selectedDate)
         
-        // Typical clinic hours: 08:00 to 20:00
-        for hour in 8..<21 {
+        // Clinic hours: 08:00 to midnight
+        for hour in 8..<24 {
             for minute in stride(from: 0, to: 60, by: 15) {
                 if let slot = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: baseDate) {
                     slots.append(slot)
@@ -91,6 +91,15 @@ struct ScheduleView: View {
                 List {
                     ForEach(generateTimeSlots(), id: \.self) { slot in
                         timeSlotRow(for: slot)
+                            .swipeActions(edge: .trailing) {
+                                if let apt = appointmentForSlot(slot) {
+                                    Button(role: .destructive) {
+                                        appointmentStore.delete(id: apt.id)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                            }
                     }
                 }
                 .listStyle(.plain)
@@ -166,6 +175,13 @@ struct ScheduleView: View {
         .buttonStyle(.plain)
     }
 
+    private func appointmentForSlot(_ slot: Date) -> Appointment? {
+        let calendar = Calendar.current
+        return appointmentStore.appointments.first(where: {
+            calendar.isDate($0.startTime, equalTo: slot, toGranularity: .minute)
+        })
+    }
+
     private func patientDisplayName(_ p: Patient) -> String {
         let en = p.nameEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
         return en.isEmpty ? "New Patient" : en
@@ -178,7 +194,8 @@ struct AddAppointmentView: View {
     
     let timeSlot: Date
     let onSave: (Appointment) -> Void
-    
+    var initialPatientID: UUID? = nil
+
     @State private var selectedPatientID: UUID?
     @State private var duration: Int = 15
     @State private var notes: String = ""
@@ -217,6 +234,11 @@ struct AddAppointmentView: View {
                 } header: { Text("Clinical Notes") }
             }
             .navigationTitle("Schedule Appointment")
+            .onAppear {
+                if selectedPatientID == nil, let initial = initialPatientID {
+                    selectedPatientID = initial
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
