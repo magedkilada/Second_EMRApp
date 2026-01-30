@@ -399,9 +399,7 @@ struct ReferencesView: View {
     private func handleFileImport(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result else { return }
 
-        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let refFilesDir = docsDir.appendingPathComponent("ReferenceFiles")
-        try? FileManager.default.createDirectory(at: refFilesDir, withIntermediateDirectories: true)
+        let refFilesDir = ReferencesStore.referenceFilesDirectory
 
         // Use the currently selected category, or default to .misc
         let importCategory = refStore.selectedCategory ?? .misc
@@ -483,9 +481,7 @@ struct ReferencesView: View {
                             .replacingOccurrences(of: ":", with: "-")
                             .replacingOccurrences(of: " ", with: "_")
 
-                        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                        let photoDir = docsDir.appendingPathComponent("ReferencePhotos")
-                        try? FileManager.default.createDirectory(at: photoDir, withIntermediateDirectories: true)
+                        let photoDir = ReferencesStore.referencePhotosDirectory
                         let photoFilename = filename + ".jpg"
                         let fileURL = photoDir.appendingPathComponent(photoFilename)
                         try? data.write(to: fileURL)
