@@ -412,11 +412,15 @@ struct ReferencesView: View {
                 let destURL = refFilesDir.appendingPathComponent(url.lastPathComponent)
                 try? data.write(to: destURL, options: .atomic)
 
+                // Extract text from PDF for searchability
                 var bodyText = ""
-                if let pdfDoc = PDFDocument(url: destURL) {
+                // Try from saved file first, fall back to in-memory data
+                let pdfDoc = PDFDocument(url: destURL) ?? PDFDocument(data: data)
+                if let pdfDoc = pdfDoc {
                     var pages: [String] = []
                     for i in 0..<pdfDoc.pageCount {
-                        if let page = pdfDoc.page(at: i), let text = page.string {
+                        if let page = pdfDoc.page(at: i), let text = page.string,
+                           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             pages.append(text)
                         }
                     }
@@ -427,11 +431,13 @@ struct ReferencesView: View {
                     bodyText = "Imported PDF (\(sizeStr)) — scanned document (no extractable text)"
                 }
 
+                // Store RELATIVE path (survives iOS sandbox container UUID changes)
+                let relativePath = "ReferenceFiles/\(url.lastPathComponent)"
                 let item = ReferenceItem(
                     title: filename,
                     category: .misc,
                     body: bodyText,
-                    filePath: destURL.path
+                    filePath: relativePath
                 )
                 refStore.items.insert(item, at: 0)
                 refStore.update(item)
@@ -448,11 +454,13 @@ struct ReferencesView: View {
                 try? data.write(to: destURL, options: .atomic)
 
                 let sizeStr = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+                // Store RELATIVE path
+                let relativePath = "ReferenceFiles/\(url.lastPathComponent)"
                 let item = ReferenceItem(
                     title: filename,
                     category: .misc,
                     body: "Imported \(ext.uppercased()) file (\(sizeStr))",
-                    filePath: destURL.path
+                    filePath: relativePath
                 )
                 refStore.items.insert(item, at: 0)
                 refStore.update(item)
@@ -475,14 +483,16 @@ struct ReferencesView: View {
                         let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                         let photoDir = docsDir.appendingPathComponent("ReferencePhotos")
                         try? FileManager.default.createDirectory(at: photoDir, withIntermediateDirectories: true)
-                        let fileURL = photoDir.appendingPathComponent(filename + ".jpg")
+                        let photoFilename = filename + ".jpg"
+                        let fileURL = photoDir.appendingPathComponent(photoFilename)
                         try? data.write(to: fileURL)
 
+                        // Store RELATIVE path
                         let ref = ReferenceItem(
                             title: filename,
                             category: .misc,
                             body: "Imported photo",
-                            filePath: fileURL.path
+                            filePath: "ReferencePhotos/\(photoFilename)"
                         )
                         refStore.items.insert(ref, at: 0)
                         refStore.update(ref)

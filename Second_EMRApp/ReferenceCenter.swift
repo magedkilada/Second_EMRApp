@@ -39,9 +39,26 @@ public struct ReferenceItem: Identifiable, Hashable, Codable {
     }
 
     /// Resolved file URL, if file exists on disk.
+    /// `filePath` stores a relative path from Documents (e.g. "ReferenceFiles/file.pdf").
     public var fileURL: URL? {
-        guard let path = filePath else { return nil }
-        let url = URL(fileURLWithPath: path)
+        guard let path = filePath, !path.isEmpty else { return nil }
+
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+
+        // Support both relative and legacy absolute paths
+        let url: URL
+        if path.hasPrefix("/") {
+            // Legacy absolute path — try to extract the relative portion
+            if let range = path.range(of: "Documents/") {
+                let relative = String(path[range.upperBound...])
+                url = docs.appendingPathComponent(relative)
+            } else {
+                url = URL(fileURLWithPath: path)
+            }
+        } else {
+            url = docs.appendingPathComponent(path)
+        }
+
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }
