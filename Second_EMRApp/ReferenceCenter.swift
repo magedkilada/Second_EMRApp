@@ -97,9 +97,19 @@ public final class ReferencesStore: ObservableObject {
         return item
     }
 
+    /// Insert a new item and persist immediately.
+    public func add(_ item: ReferenceItem) {
+        items.insert(item, at: 0)
+        saveToDisk()
+    }
+
     public func update(_ item: ReferenceItem) {
-        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[idx] = item
+        if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            items[idx] = item
+        } else {
+            // Item not found — add it (safety net)
+            items.insert(item, at: 0)
+        }
         saveToDisk()
     }
 

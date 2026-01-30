@@ -46,10 +46,9 @@ struct ReferencesView: View {
         }
         .sheet(isPresented: $showAddSheet) {
             ReferenceEditSheet(
-                item: ReferenceItem(title: "", category: .misc, body: ""),
+                item: ReferenceItem(title: "", category: refStore.selectedCategory ?? .misc, body: ""),
                 onSave: { item in
-                    refStore.items.insert(item, at: 0)
-                    refStore.update(item) // persist
+                    refStore.add(item)
                     selectedItemID = item.id
                     showAddSheet = false
                 },
@@ -392,12 +391,20 @@ struct ReferencesView: View {
 
     // MARK: - Import Handlers
 
+    /// Strip characters that could break JSON encoding.
+    private func sanitizeText(_ text: String) -> String {
+        text.unicodeScalars.filter { $0.value != 0 }.map(String.init).joined()
+    }
+
     private func handleFileImport(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result else { return }
 
         let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let refFilesDir = docsDir.appendingPathComponent("ReferenceFiles")
         try? FileManager.default.createDirectory(at: refFilesDir, withIntermediateDirectories: true)
+
+        // Use the currently selected category, or default to .misc
+        let importCategory = refStore.selectedCategory ?? .misc
 
         for url in urls {
             let accessing = url.startAccessingSecurityScopedResource()
@@ -414,7 +421,6 @@ struct ReferencesView: View {
 
                 // Extract text from PDF for searchability
                 var bodyText = ""
-                // Try from saved file first, fall back to in-memory data
                 let pdfDoc = PDFDocument(url: destURL) ?? PDFDocument(data: data)
                 if let pdfDoc = pdfDoc {
                     var pages: [String] = []
@@ -424,52 +430,50 @@ struct ReferencesView: View {
                             pages.append(text)
                         }
                     }
-                    bodyText = pages.joined(separator: "\n\n")
+                    bodyText = sanitizeText(pages.joined(separator: "\n\n"))
                 }
                 if bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let sizeStr = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
                     bodyText = "Imported PDF (\(sizeStr)) — scanned document (no extractable text)"
                 }
 
-                // Store RELATIVE path (survives iOS sandbox container UUID changes)
                 let relativePath = "ReferenceFiles/\(url.lastPathComponent)"
                 let item = ReferenceItem(
                     title: filename,
-                    category: .misc,
+                    category: importCategory,
                     body: bodyText,
                     filePath: relativePath
                 )
-                refStore.items.insert(item, at: 0)
-                refStore.update(item)
+                refStore.add(item)
                 selectedItemID = item.id
             } else if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
-                // Plain text file
-                let item = ReferenceItem(title: filename, category: .misc, body: text)
-                refStore.items.insert(item, at: 0)
-                refStore.update(item)
+                let item = ReferenceItem(
+                    title: filename,
+                    category: importCategory,
+                    body: sanitizeText(text)
+                )
+                refStore.add(item)
                 selectedItemID = item.id
             } else if let data = try? Data(contentsOf: url) {
-                // Other binary file — save to disk
                 let destURL = refFilesDir.appendingPathComponent(url.lastPathComponent)
                 try? data.write(to: destURL, options: .atomic)
 
                 let sizeStr = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
-                // Store RELATIVE path
                 let relativePath = "ReferenceFiles/\(url.lastPathComponent)"
                 let item = ReferenceItem(
                     title: filename,
-                    category: .misc,
+                    category: importCategory,
                     body: "Imported \(ext.uppercased()) file (\(sizeStr))",
                     filePath: relativePath
                 )
-                refStore.items.insert(item, at: 0)
-                refStore.update(item)
+                refStore.add(item)
                 selectedItemID = item.id
             }
         }
     }
 
     private func handlePhotoImport(_ items: [PhotosPickerItem]) {
+        let importCategory = refStore.selectedCategory ?? .misc
         for item in items {
             item.loadTransferable(type: Data.self) { result in
                 if case .success(let data) = result, let data = data {
@@ -479,7 +483,6 @@ struct ReferencesView: View {
                             .replacingOccurrences(of: ":", with: "-")
                             .replacingOccurrences(of: " ", with: "_")
 
-                        // Save to Documents for later viewing
                         let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                         let photoDir = docsDir.appendingPathComponent("ReferencePhotos")
                         try? FileManager.default.createDirectory(at: photoDir, withIntermediateDirectories: true)
@@ -487,15 +490,13 @@ struct ReferencesView: View {
                         let fileURL = photoDir.appendingPathComponent(photoFilename)
                         try? data.write(to: fileURL)
 
-                        // Store RELATIVE path
                         let ref = ReferenceItem(
                             title: filename,
-                            category: .misc,
+                            category: importCategory,
                             body: "Imported photo",
                             filePath: "ReferencePhotos/\(photoFilename)"
                         )
-                        refStore.items.insert(ref, at: 0)
-                        refStore.update(ref)
+                        refStore.add(ref)
                         selectedItemID = ref.id
                     }
                 }
