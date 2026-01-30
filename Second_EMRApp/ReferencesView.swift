@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import PDFKit
 
 struct ReferencesView: View {
     @StateObject private var refStore = ReferencesStore()
@@ -18,10 +19,14 @@ struct ReferencesView: View {
         let items = refStore.filteredItems
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return items }
-        return items.filter {
-            $0.title.lowercased().contains(q) ||
-            $0.body.lowercased().contains(q) ||
-            $0.category.rawValue.lowercased().contains(q)
+
+        // Split query into words — ALL words must appear somewhere in the item
+        let words = q.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        guard !words.isEmpty else { return items }
+
+        return items.filter { item in
+            let searchable = "\(item.title) \(item.body) \(item.category.rawValue)".lowercased()
+            return words.allSatisfy { searchable.contains($0) }
         }
     }
 
@@ -401,14 +406,44 @@ struct ReferencesView: View {
             let filename = url.deletingPathExtension().lastPathComponent
             let ext = url.pathExtension.lowercased()
 
-            // Try reading as plain text
-            if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
+            if ext == "pdf" {
+                // PDF — save to disk + extract text for search
+                guard let data = try? Data(contentsOf: url) else { continue }
+                let destURL = refFilesDir.appendingPathComponent(url.lastPathComponent)
+                try? data.write(to: destURL, options: .atomic)
+
+                var bodyText = ""
+                if let pdfDoc = PDFDocument(url: destURL) {
+                    var pages: [String] = []
+                    for i in 0..<pdfDoc.pageCount {
+                        if let page = pdfDoc.page(at: i), let text = page.string {
+                            pages.append(text)
+                        }
+                    }
+                    bodyText = pages.joined(separator: "\n\n")
+                }
+                if bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let sizeStr = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+                    bodyText = "Imported PDF (\(sizeStr)) — scanned document (no extractable text)"
+                }
+
+                let item = ReferenceItem(
+                    title: filename,
+                    category: .misc,
+                    body: bodyText,
+                    filePath: destURL.path
+                )
+                refStore.items.insert(item, at: 0)
+                refStore.update(item)
+                selectedItemID = item.id
+            } else if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
+                // Plain text file
                 let item = ReferenceItem(title: filename, category: .misc, body: text)
                 refStore.items.insert(item, at: 0)
                 refStore.update(item)
                 selectedItemID = item.id
             } else if let data = try? Data(contentsOf: url) {
-                // Binary file (PDF, etc.) — save to disk
+                // Other binary file — save to disk
                 let destURL = refFilesDir.appendingPathComponent(url.lastPathComponent)
                 try? data.write(to: destURL, options: .atomic)
 
