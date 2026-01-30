@@ -7,8 +7,6 @@ struct PatientSummaryDashboard: View {
     @State private var showEditDemographics = false
     @State private var workingVitals: SmartVitalsEntry?
     @State private var scheduleDate: Date = Date()
-    @State private var showAddAppointment = false
-    @State private var selectedTimeSlot: Date?
 
     // MARK: - Computed Properties
     private var notesCount: Int {
@@ -46,19 +44,6 @@ struct PatientSummaryDashboard: View {
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showAddAppointment) {
-            if let timeSlot = selectedTimeSlot {
-                AddAppointmentView(
-                    timeSlot: timeSlot,
-                    onSave: { appointment in
-                        appointmentStore.add(appointment)
-                        showAddAppointment = false
-                    },
-                    initialPatientID: patient.id
-                )
-                .environmentObject(store)
-            }
-        }
         .sheet(isPresented: $showEditDemographics) {
             NavigationStack {
                 PatientDemographicsView(
@@ -255,64 +240,77 @@ struct PatientSummaryDashboard: View {
         }
     }
 
+    @ViewBuilder
     private func scheduleSlotRow(slot: Date, appointment: Appointment?) -> some View {
-        Button {
-            selectedTimeSlot = slot
-            showAddAppointment = true
-        } label: {
+        if let apt = appointment {
+            // Booked slot — show details, no tap action
             HStack(spacing: 12) {
                 Text(slot, style: .time)
                     .font(.system(.caption, design: .monospaced))
                     .frame(width: 60, alignment: .leading)
                     .foregroundStyle(.secondary)
 
-                if let apt = appointment {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.blue)
-                            .frame(width: 8, height: 8)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 8, height: 8)
 
-                        if let pid = apt.patientID,
-                           let p = store.patients.first(where: { $0.id == pid }) {
-                            Text(p.nameEnglish.isEmpty ? "Unnamed" : p.nameEnglish)
-                                .font(.caption).bold()
-                        } else {
-                            Text("Reserved").font(.caption).italic()
-                        }
+                    if let pid = apt.patientID,
+                       let p = store.patients.first(where: { $0.id == pid }) {
+                        Text(p.nameEnglish.isEmpty ? "Unnamed" : p.nameEnglish)
+                            .font(.caption).bold()
+                    } else {
+                        Text("Reserved").font(.caption).italic()
+                    }
 
-                        if !apt.notes.isEmpty {
-                            Text("– \(apt.notes)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-
-                        Text("\(apt.durationMinutes)m")
+                    if !apt.notes.isEmpty {
+                        Text("– \(apt.notes)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-
-                        Button {
-                            appointmentStore.delete(id: apt.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.red.opacity(0.7))
-                        }
-                        .buttonStyle(.plain)
+                            .lineLimit(1)
                     }
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(Color.blue.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                } else {
+
+                    Spacer()
+
+                    Text("\(apt.durationMinutes)m")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        appointmentStore.delete(id: apt.id)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(Color.blue.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        } else {
+            // Empty slot — single tap books this patient immediately
+            Button {
+                let appointment = Appointment(
+                    patientID: patient.id,
+                    startTime: slot,
+                    durationMinutes: 15
+                )
+                appointmentStore.add(appointment)
+            } label: {
+                HStack(spacing: 12) {
+                    Text(slot, style: .time)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(width: 60, alignment: .leading)
+                        .foregroundStyle(.secondary)
                     Spacer()
                 }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 
     private func generateTimeSlots(for date: Date) -> [Date] {
