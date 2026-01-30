@@ -64,7 +64,7 @@ struct ReferencesView: View {
         }
         .fileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: [.pdf, .plainText, .rtf, .rtfd, .text],
+            allowedContentTypes: [.pdf, .plainText, .rtf, .rtfd, .text, .image, .jpeg, .png],
             allowsMultipleSelection: true
         ) { result in
             handleFileImport(result)
@@ -133,6 +133,10 @@ struct ReferencesView: View {
                 }
 
                 Divider()
+
+                if let fileURL = item.fileURL {
+                    filePreview(url: fileURL)
+                }
 
                 Text(item.body)
                     .font(.body)
@@ -298,6 +302,10 @@ struct ReferencesView: View {
 
                         Divider()
 
+                        if let fileURL = item.fileURL {
+                            filePreview(url: fileURL)
+                        }
+
                         Text(item.body)
                             .font(.body)
                             .textSelection(.enabled)
@@ -320,31 +328,79 @@ struct ReferencesView: View {
         .background(Color.secondarySystemGroupedBg)
     }
 
+    // MARK: - File Preview
+
+    @ViewBuilder
+    private func filePreview(url: URL) -> some View {
+        let ext = url.pathExtension.lowercased()
+        if ext == "pdf" {
+            QuickLookPreview(url: url)
+                .frame(minHeight: 400)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else if ["jpg", "jpeg", "png", "heic", "gif", "webp"].contains(ext) {
+            #if os(iOS)
+            if let data = try? Data(contentsOf: url),
+               let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 400)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            #elseif os(macOS)
+            if let nsImage = NSImage(contentsOf: url) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 400)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            #endif
+        } else {
+            // Generic file — show open button
+            QuickLookPreview(url: url)
+                .frame(minHeight: 200)
+        }
+    }
+
     // MARK: - Import Handlers
 
     private func handleFileImport(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result else { return }
+
+        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let refFilesDir = docsDir.appendingPathComponent("ReferenceFiles")
+        try? FileManager.default.createDirectory(at: refFilesDir, withIntermediateDirectories: true)
+
         for url in urls {
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
             let filename = url.deletingPathExtension().lastPathComponent
-            var body = ""
+            let ext = url.pathExtension.lowercased()
 
-            if let text = try? String(contentsOf: url, encoding: .utf8) {
-                body = text
+            // Try reading as plain text
+            if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
+                let item = ReferenceItem(title: filename, category: .misc, body: text)
+                refStore.items.insert(item, at: 0)
+                refStore.update(item)
+                selectedItemID = item.id
             } else if let data = try? Data(contentsOf: url) {
-                body = "[Imported file: \(url.lastPathComponent), \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))]"
-            }
+                // Binary file (PDF, etc.) — save to disk
+                let destURL = refFilesDir.appendingPathComponent(url.lastPathComponent)
+                try? data.write(to: destURL, options: .atomic)
 
-            let item = ReferenceItem(
-                title: filename,
-                category: .misc,
-                body: body
-            )
-            refStore.items.insert(item, at: 0)
-            refStore.update(item)
-            selectedItemID = item.id
+                let sizeStr = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+                let item = ReferenceItem(
+                    title: filename,
+                    category: .misc,
+                    body: "Imported \(ext.uppercased()) file (\(sizeStr))",
+                    filePath: destURL.path
+                )
+                refStore.items.insert(item, at: 0)
+                refStore.update(item)
+                selectedItemID = item.id
+            }
         }
     }
 
@@ -368,7 +424,8 @@ struct ReferencesView: View {
                         let ref = ReferenceItem(
                             title: filename,
                             category: .misc,
-                            body: "[Photo imported: \(filename).jpg]\nFile path: \(fileURL.path)"
+                            body: "Imported photo",
+                            filePath: fileURL.path
                         )
                         refStore.items.insert(ref, at: 0)
                         refStore.update(ref)

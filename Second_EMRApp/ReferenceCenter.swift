@@ -20,19 +20,29 @@ public struct ReferenceItem: Identifiable, Hashable, Codable {
     public var category: Category
     public var body: String
     public var isFavorite: Bool = false
+    public var filePath: String? = nil
 
     public init(
         id: UUID = UUID(),
         title: String,
         category: Category,
         body: String,
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        filePath: String? = nil
     ) {
         self.id = id
         self.title = title
         self.category = category
         self.body = body
         self.isFavorite = isFavorite
+        self.filePath = filePath
+    }
+
+    /// Resolved file URL, if file exists on disk.
+    public var fileURL: URL? {
+        guard let path = filePath else { return nil }
+        let url = URL(fileURLWithPath: path)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }
 
