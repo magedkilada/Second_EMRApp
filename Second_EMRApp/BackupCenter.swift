@@ -27,26 +27,18 @@ final class BackupCenter: ObservableObject {
         }
     }
 
-    // MARK: - Backup Directory
+    // MARK: - Backup Directory (local only)
 
-    /// Use iCloud Documents if available, otherwise fall back to local Documents.
     static var backupDirectory: URL {
-        if let icloud = FileManager.default.url(forUbiquityContainerIdentifier: nil)?
-            .appendingPathComponent("Documents") {
-            // Ensure the directory exists
-            try? FileManager.default.createDirectory(at: icloud, withIntermediateDirectories: true)
-            return icloud
-        }
-        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    }
-
-    static var isICloudAvailable: Bool {
-        FileManager.default.ubiquityIdentityToken != nil
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent("Backups")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     // MARK: - Create Backup
 
-    func createBackup(store: EMRStore, password: String) {
+    func createBackup(store: EMRStore, referencesStore: ReferencesStore, password: String) {
         guard !isProcessing else { return }
         guard !password.isEmpty else { lastError = "Password is required."; return }
         isProcessing = true
@@ -57,7 +49,8 @@ final class BackupCenter: ObservableObject {
                 patients: store.patients,
                 notes: store.notes,
                 attachments: store.attachments,
-                vitals: store.vitals
+                vitals: store.vitals,
+                references: referencesStore.items
             )
             let jsonData = try JSONEncoder().encode(payload)
             let encrypted = try BackupCrypto.encrypt(jsonData, password: password)
@@ -78,7 +71,7 @@ final class BackupCenter: ObservableObject {
 
     // MARK: - Restore from File
 
-    func restoreFromFile(_ fileURL: URL, password: String, store: EMRStore) -> Bool {
+    func restoreFromFile(_ fileURL: URL, password: String, store: EMRStore, referencesStore: ReferencesStore) -> Bool {
         guard !isProcessing else { return false }
         guard !password.isEmpty else { lastError = "Password is required."; return false }
         isProcessing = true
@@ -99,6 +92,7 @@ final class BackupCenter: ObservableObject {
             store.replaceAllNotes(with: payload.notes)
             store.setAttachments(payload.attachments)
             store.replaceAllVitals(with: payload.vitals)
+            referencesStore.replaceAll(with: payload.references)
 
             lastRestoreDate = Date()
             return true
@@ -137,13 +131,13 @@ final class BackupCenter: ObservableObject {
 
     // MARK: - Auto-Backup
 
-    func autoBackupIfNeeded(store: EMRStore, password: String) {
+    func autoBackupIfNeeded(store: EMRStore, referencesStore: ReferencesStore, password: String) {
         guard autoBackupEnabled, !isProcessing, !password.isEmpty else { return }
 
         // Throttle: only auto-backup once per hour
         if let last = lastBackupDate, Date().timeIntervalSince(last) < 3600 { return }
 
-        createBackup(store: store, password: password)
+        createBackup(store: store, referencesStore: referencesStore, password: password)
     }
 
     // MARK: - Helpers

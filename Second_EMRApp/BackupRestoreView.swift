@@ -5,7 +5,9 @@ struct BackupRestoreView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var store: EMRStore
     @EnvironmentObject var backupCenter: BackupCenter
+    @EnvironmentObject var referencesStore: ReferencesStore
 
+    @State private var shareURL: URL? = nil
     @State private var password: String = ""
     @State private var confirmPassword: String = ""
     @State private var showPasswordSetup = false
@@ -84,7 +86,25 @@ struct BackupRestoreView: View {
             .alert("Backup Created", isPresented: $showBackupSuccess) {
                 Button("OK") {}
             } message: {
-                Text("Encrypted backup saved successfully.\(BackupCenter.isICloudAvailable ? " It will sync to iCloud." : "")")
+                Text("Encrypted backup saved locally. Use the share button to export it to iCloud Drive or another cloud storage.")
+            }
+            #if os(iOS)
+            .sheet(isPresented: Binding(
+                get: { shareURL != nil },
+                set: { if !$0 { shareURL = nil } }
+            )) {
+                if let url = shareURL {
+                    ShareSheet(items: [url])
+                }
+            }
+            #endif
+            .onChange(of: shareURL) { _, newURL in
+                #if os(macOS)
+                if let url = newURL {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                    shareURL = nil
+                }
+                #endif
             }
             .alert("Delete Backup?", isPresented: $showDeleteConfirm) {
                 Button("Delete", role: .destructive) {
@@ -106,9 +126,9 @@ struct BackupRestoreView: View {
     private var statusSection: some View {
         Section {
             HStack {
-                Image(systemName: BackupCenter.isICloudAvailable ? "icloud.fill" : "internaldrive.fill")
-                    .foregroundStyle(BackupCenter.isICloudAvailable ? .blue : .orange)
-                Text(BackupCenter.isICloudAvailable ? "iCloud Available" : "Local Storage Only")
+                Image(systemName: "lock.shield.fill")
+                    .foregroundStyle(.green)
+                Text("Local + Encrypted Export")
                     .font(.subheadline)
             }
 
@@ -128,6 +148,8 @@ struct BackupRestoreView: View {
             }
         } header: {
             Text("Status")
+        } footer: {
+            Text("Data is stored locally on device. Use \"Export to iCloud Drive\" to manually sync an encrypted backup across devices.")
         }
     }
 
@@ -186,11 +208,23 @@ struct BackupRestoreView: View {
                 }
             }
             .disabled(!hasKeychainPassword || backupCenter.isProcessing)
+
+            Button {
+                createAndShare()
+            } label: {
+                HStack {
+                    Image(systemName: "square.and.arrow.up")
+                    Text("Create & Export to iCloud Drive")
+                }
+            }
+            .disabled(!hasKeychainPassword || backupCenter.isProcessing)
         } header: {
             Text("Manual Backup")
         } footer: {
             if !hasKeychainPassword {
                 Text("Set an encryption password first.")
+            } else {
+                Text("\"Export to iCloud Drive\" creates a backup and opens the share sheet so you can save it to iCloud Drive, AirDrop, or any cloud storage.")
             }
         }
     }
@@ -253,6 +287,15 @@ struct BackupRestoreView: View {
                         Spacer()
 
                         Button {
+                            shareURL = file.url
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.subheadline)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.blue)
+
+                        Button {
                             pendingRestoreURL = file.url
                             restorePassword = ""
                             showRestorePasswordPrompt = true
@@ -302,9 +345,18 @@ struct BackupRestoreView: View {
         }
     }
 
+    private func createAndShare() {
+        guard let pw = AutoBackupKeychain.load() else { return }
+        backupCenter.createBackup(store: store, referencesStore: referencesStore, password: pw)
+        if backupCenter.lastError.isEmpty {
+            backupFiles = backupCenter.listBackups()
+            shareURL = backupCenter.lastCreatedBackupURL
+        }
+    }
+
     private func createManualBackup() {
         guard let pw = AutoBackupKeychain.load() else { return }
-        backupCenter.createBackup(store: store, password: pw)
+        backupCenter.createBackup(store: store, referencesStore: referencesStore, password: pw)
         if backupCenter.lastError.isEmpty {
             showBackupSuccess = true
             backupFiles = backupCenter.listBackups()
@@ -313,7 +365,7 @@ struct BackupRestoreView: View {
 
     private func performRestore() {
         guard let url = pendingRestoreURL else { return }
-        let success = backupCenter.restoreFromFile(url, password: restorePassword, store: store)
+        let success = backupCenter.restoreFromFile(url, password: restorePassword, store: store, referencesStore: referencesStore)
         if success {
             showRestoreSuccess = true
         }
@@ -321,3 +373,17 @@ struct BackupRestoreView: View {
         restorePassword = ""
     }
 }
+
+// MARK: - Share Sheet
+
+#if os(iOS)
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif

@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import PDFKit
 
 struct ReferencesView: View {
-    @StateObject private var refStore = ReferencesStore()
+    @EnvironmentObject private var refStore: ReferencesStore
     @Environment(\.horizontalSizeClass) private var hSize
     @State private var searchText = ""
     @State private var selectedItemID: UUID?

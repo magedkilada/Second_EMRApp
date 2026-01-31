@@ -4,6 +4,7 @@ struct LeftSidebarView: View {
     @EnvironmentObject private var store: EMRStore
     @EnvironmentObject private var physicians: PhysiciansStore
     @EnvironmentObject private var backupCenter: BackupCenter
+    @EnvironmentObject private var referencesStore: ReferencesStore
 
     @Binding var searchText: String
 
@@ -99,6 +100,7 @@ struct LeftSidebarView: View {
             BackupRestoreView()
                 .environmentObject(store)
                 .environmentObject(backupCenter)
+                .environmentObject(referencesStore)
         }
         .sheet(isPresented: $showAddPatient, onDismiss: {
             newPatient = Patient()

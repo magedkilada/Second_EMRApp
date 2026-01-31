@@ -14,6 +14,7 @@ struct Second_EMRAppApp: App {
     @StateObject private var physicians = PhysiciansStore()
     @StateObject private var growthStore = GrowthStore.shared
     @StateObject private var backupCenter = BackupCenter()
+    @StateObject private var referencesStore = ReferencesStore()
 
     init() {
         print("🚀 APP LAUNCHED")
@@ -33,6 +34,7 @@ struct Second_EMRAppApp: App {
                 .environmentObject(physicians)
                 .environmentObject(growthStore)
                 .environmentObject(backupCenter)
+                .environmentObject(referencesStore)
                 .task {
                     // 1. Load WHO Growth Data
                     growthStore.loadBundleJSON(named: [
@@ -47,9 +49,10 @@ struct Second_EMRAppApp: App {
                     // 2. Preload pediatric references
                     GrowthReferences.shared.preloadIfNeeded()
                     
-                    // 3. WIRE BACKUP CENTER TO STORE
+                    // 3. WIRE BACKUP CENTER + REFERENCES TO STORE
                     // This allows the store to trigger auto-backups during data saves
                     store.backupCenter = backupCenter
+                    store.referencesStore = referencesStore
                 }
         }
     }

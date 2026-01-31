@@ -30,6 +30,7 @@ final class EMRStore: ObservableObject {
 
     /// Set this once in ContentView: store.backupCenter = backupCenter
     var backupCenter: BackupCenter? = nil
+    var referencesStore: ReferencesStore? = nil
 
     // MARK: - Init
 
@@ -188,7 +189,8 @@ final class EMRStore: ObservableObject {
 
         guard let pw = AutoBackupKeychain.load(), !pw.isEmpty else { return }
 
-        backupCenter.autoBackupIfNeeded(store: self, password: pw)
+        guard let refStore = referencesStore else { return }
+        backupCenter.autoBackupIfNeeded(store: self, referencesStore: refStore, password: pw)
     }
 
     // MARK: - File URLs
