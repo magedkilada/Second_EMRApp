@@ -95,7 +95,7 @@ public final class ReferencesStore: ObservableObject {
     }
 
     private static let seedVersionKey = "ReferencesStore_SeedVersion"
-    private static let currentSeedVersion = 2  // Bump this when adding new default scales
+    private static let currentSeedVersion = 3  // Bump this when adding new default scales
 
     public init() {
         loadFromDisk()
@@ -615,6 +615,371 @@ Recovery Rate (Hirabayashi):
   Good: 50–74%
   Fair: 25–49%
   Poor: < 25%
+"""
+            ),
+
+            // ── 9. SLIC — Subaxial Cervical Injury Classification ─────
+            ReferenceItem(
+                title: "Subaxial Injury Classification (SLIC) System",
+                category: .scales,
+                body:
+"""
+Subaxial Cervical Spine Injury Classification (SLIC)
+(Vaccaro et al., 2007)
+Applies to C3–C7 subaxial cervical spine injuries
+Total Score: 0–10+
+
+1. MORPHOLOGY — 0–4 points
+  0: No abnormality
+  1: Compression fracture
+  2: Burst fracture
+  3: Distraction injury (e.g., facet perch, hyperextension)
+  4: Rotation / translation injury (e.g., facet dislocation, unstable teardrop, bilateral pedicle fracture)
+
+2. DISCO-LIGAMENTOUS COMPLEX (DLC) — 0–2 points
+  0: Intact
+  1: Indeterminate (MRI signal change, isolated interspinous widening)
+  2: Disrupted (widened disc space, facet perch/dislocation, kyphotic deformity)
+
+Key Indicators of DLC Disruption:
+  - Widened interspinous space
+  - Facet subluxation or dislocation
+  - Abnormal MRI signal in posterior ligaments
+  - Widened disc space anteriorly
+
+3. NEUROLOGICAL STATUS — 0–4 points
+  0: Intact
+  1: Root injury (radiculopathy)
+  2: Complete spinal cord injury
+  3: Incomplete spinal cord injury (e.g., central cord, Brown-Séquard)
+  +1: Ongoing cord compression with neuro deficit (modifier)
+
+Treatment Algorithm:
+  Score 1–3: Non-operative management (rigid collar, halo)
+  Score 4: May be treated operatively OR non-operatively (surgeon discretion)
+  Score >= 5: Operative management recommended
+
+Surgical Approach Considerations:
+  - Anterior compression → anterior approach (corpectomy/ACDF)
+  - Posterior ligamentous disruption → posterior approach (lateral mass screws)
+  - Combined injuries → combined anterior-posterior approach (360°)
+
+Notes:
+  - Always assess all 3 components independently
+  - MRI is essential to evaluate DLC status
+  - Consider patient factors (age, comorbidities, pre-existing stenosis)
+  - SLIC does not apply to occipital-C2 injuries
+"""
+            ),
+
+            // ── 10. AO Spine Thoracolumbar Classification ─────────────
+            ReferenceItem(
+                title: "AO Spine Thoracolumbar Injury Classification",
+                category: .scales,
+                body:
+"""
+AO Spine Thoracolumbar Injury Classification System
+(Vaccaro et al., 2013 — Global Standard)
+Applies to T1–L5 thoracolumbar spine injuries
+
+═══ INJURY MORPHOLOGY (Type A, B, C) ═══
+
+TYPE A — Compression Injuries (Vertebral body)
+  A0: Minor, non-structural fracture (spinous/transverse process)
+  A1: Wedge compression / impaction fracture
+      - Single endplate involvement
+      - Posterior wall intact
+  A2: Split / pincer-type fracture
+      - Both endplates involved (coronal or sagittal split)
+      - Posterior wall intact
+  A3: Incomplete burst fracture
+      - Single endplate + posterior wall involvement
+      - Retropulsed fragment into canal
+  A4: Complete burst fracture
+      - Both endplates + posterior wall involvement
+
+TYPE B — Tension Band Injuries (Posterior or anterior distraction)
+  B1: Transosseous tension band failure (Chance fracture)
+      - Bony posterior element fracture extending through vertebral body
+  B2: Posterior tension band disruption (ligamentous)
+      - Posterior ligamentous complex failure
+      - With Type A fracture of vertebral body
+  B3: Anterior tension band disruption (hyperextension)
+      - Anterior longitudinal ligament / disc disruption
+      - Rare; seen in ankylosing spondylitis / DISH
+
+TYPE C — Displacement / Translation
+  - Any injury with displacement or translation in ANY plane
+  - Includes facet dislocations, shear injuries
+  - Most unstable morphology
+
+═══ NEUROLOGICAL STATUS (N) ═══
+  N0: Neurologically intact
+  N1: Transient neurological deficit (resolved)
+  N2: Radiculopathy
+  N3: Incomplete spinal cord injury / cauda equina
+  N4: Complete spinal cord injury
+  NX: Cannot be examined (intubated, sedated, polytrauma)
+
+═══ PATIENT-SPECIFIC MODIFIERS (M) ═══
+  M1: Indeterminate significance (e.g., posterior ligamentous complex unclear on MRI)
+  M2: Patient-specific comorbidity affecting treatment
+      - Ankylosing spondylitis / DISH
+      - Osteoporosis
+      - Metabolic bone disease
+
+═══ TREATMENT GUIDELINES (AO Spine TL Score) ═══
+  A0, A1, A2 + N0: Non-operative (TLSO brace)
+  A3, A4 + N0: Consider operative (depends on kyphosis, canal compromise)
+  Any B or C type: Operative management recommended
+  Any N3 or N4: Operative with decompression
+  M2 modifiers: Lower threshold for surgical fixation
+
+Classification Format Example:
+  T12 fracture: A4 + N3 + M1 = Complete burst, incomplete SCI, indeterminate PLC
+
+Notes:
+  - CT is essential for morphology classification
+  - MRI for neurological status and PLC integrity
+  - Replace the older Denis and Magerl classifications
+  - Used globally as the current standard
+"""
+            ),
+
+            // ── 11. Denis Classification — Sacral Fractures ───────────
+            ReferenceItem(
+                title: "Denis Classification for Sacral Fractures",
+                category: .scales,
+                body:
+"""
+Denis Classification of Sacral Fractures
+(Denis, Davis & Comfort, 1988)
+Based on fracture location relative to sacral foramina
+
+═══ THREE ZONES ═══
+
+ZONE I — Lateral to Sacral Foramina (Alar Region)
+  - Most common (50%)
+  - Fracture through sacral ala
+  - Typically associated with pelvic ring injuries
+  - Neurological deficit: ~6%
+  - Nerve injury: L5 root (foot drop)
+  - Mechanism: Lateral compression
+
+ZONE II — Through Sacral Foramina (Foraminal Region)
+  - Second most common (34%)
+  - Fracture line passes through one or more neural foramina
+  - Neurological deficit: ~28%
+  - Nerve injury: S1, S2 roots (sciatica, calf weakness)
+  - May cause unilateral sacral nerve root injury
+  - Mechanism: Lateral compression or vertical shear
+
+ZONE III — Medial to Sacral Foramina (Central/Canal Region)
+  - Least common (16%)
+  - Fracture involves the sacral canal
+  - Neurological deficit: ~57%
+  - Nerve injury: S2–S5 roots
+  - Bowel/bladder/sexual dysfunction common
+  - May cause cauda equina syndrome
+  - Mechanism: Direct blow, vertical shear
+
+═══ ASSOCIATED INJURIES ═══
+  - Zone I: LC-type pelvic ring fractures, L5 transverse process fractures
+  - Zone II: Pelvic ring disruption, SI joint injury
+  - Zone III: Bilateral sacral fractures (U-shaped/H-shaped), spinal-pelvic dissociation
+
+═══ CLINICAL PEARLS ═══
+  - Always perform rectal exam and perianal sensation testing
+  - CT with coronal/sagittal reformats is the imaging standard
+  - MRI for nerve root assessment if neurological deficit present
+  - Zone I fractures often missed on AP pelvis radiographs
+  - Zone III fractures may require lumbopelvic fixation
+  - Serial neurological exams for all sacral fractures
+  - Document bladder function (post-void residual)
+
+═══ TREATMENT PRINCIPLES ═══
+  Zone I: Usually non-operative (weight-bearing as tolerated)
+  Zone II: Operative if displaced, unstable pelvic ring, or neuro deficit
+  Zone III: Operative — lumbopelvic fixation ± decompression
+  - Neurological deficit + canal compression = surgical decompression
+"""
+            ),
+
+            // ── 12. AO Spine Sacral Classification ────────────────────
+            ReferenceItem(
+                title: "AO Spine Sacral Classification",
+                category: .scales,
+                body:
+"""
+AO Spine Sacral Fracture Classification
+(Defined sacral fractures analogous to the AO thoracolumbar system)
+
+═══ TYPE A — Compression / Lower Sacral Injuries ═══
+
+  A0: Minor fracture
+      - Coccyx fracture
+      - Isolated transverse sacral fracture below S2
+      - Non-structural
+
+  A1: Lower sacrococcygeal fracture
+      - Below S3, no pelvic ring involvement
+      - Typically stable
+
+  A2: Sacral body compression
+      - Sacral alar fracture (Denis Zone I equivalent)
+      - Unilateral, no canal involvement
+
+═══ TYPE B — Tension Band / Posterior Pelvic Ring ═══
+
+  B1: Unilateral posterior pelvic ring injury
+      - Fracture through sacral foramina (Denis Zone II)
+      - Unilateral posterior tension band failure
+      - With or without anterior pelvic ring injury
+
+  B2: Bilateral posterior pelvic ring injury
+      - Bilateral sacral fractures
+      - H-type or U-type fracture pattern
+      - Involves sacral canal (Denis Zone III)
+      - High risk of neurological deficit
+
+  B3: Sacroiliac joint disruption
+      - Posterior pelvic ring injury through SI joint
+      - Ligamentous disruption vs. fracture-dislocation
+
+═══ TYPE C — Displacement / Sacral U-type ═══
+
+  C0: Non-displaced U-type sacral fracture
+      - Bilateral vertical + transverse component
+      - Potential for spinopelvic dissociation
+
+  C1: Displaced U-type sacral fracture
+      - Frank spinopelvic dissociation
+      - Kyphotic angulation of upper sacral fragment
+      - Almost always requires lumbopelvic fixation
+
+  C2: Sacral burst or highly comminuted
+      - Severe canal compromise
+      - Associated with high-energy mechanism
+
+═══ NEUROLOGICAL STATUS (N) ═══
+  N0: Intact
+  N1: Transient deficit
+  N2: Radiculopathy (L5, S1)
+  N3: Cauda equina — incomplete (partial bowel/bladder)
+  N4: Cauda equina — complete (absent bowel/bladder/perianal)
+  NX: Unknown / unable to assess
+
+═══ MODIFIERS (M) ═══
+  M1: Posterior soft tissue injury (Morel-Lavallée lesion, degloving)
+  M2: Comorbidity affecting treatment (osteoporosis, ankylosing spondylitis)
+  M3: Metabolic bone disease
+
+═══ TREATMENT PRINCIPLES ═══
+  A0–A1: Non-operative (symptomatic care)
+  A2, B1 without neuro deficit: Non-operative vs. percutaneous SI screw fixation
+  B2, B3: Operative — posterior fixation ± SI screws
+  C0 non-displaced: May consider non-operative with close imaging follow-up
+  C1–C2: Operative — lumbopelvic fixation (L4/L5 to ilium)
+  Neurological deficit (N3, N4): Decompression + fixation
+"""
+            ),
+
+            // ── 13. Young-Burgess Classification — Pelvic Fractures ───
+            ReferenceItem(
+                title: "Young-Burgess Classification for Pelvic Fractures",
+                category: .scales,
+                body:
+"""
+Young-Burgess Classification of Pelvic Ring Injuries
+Based on mechanism of injury and vector of force
+
+═══ LC — LATERAL COMPRESSION ═══
+(Most common mechanism, ~60% of pelvic fractures)
+
+  LC-I: Anterior sacral crush fracture + ipsilateral ramus fracture
+    - Transverse ramus fracture(s)
+    - Sacral buckle/impaction fracture
+    - Internal rotation of hemipelvis
+    - Stable / low risk of hemorrhage
+    - Blood loss: ~500 mL
+
+  LC-II: LC-I + ipsilateral posterior iliac wing fracture (crescent fracture)
+    - Iliac wing fracture with partial SI joint disruption
+    - Internal rotation of hemipelvis
+    - Moderately unstable rotationally
+    - Blood loss: ~1000 mL
+
+  LC-III: LC-I or LC-II ipsilateral + contralateral APC injury (windswept pelvis)
+    - Contralateral external rotation
+    - "Windswept" pelvis appearance
+    - Rotationally AND vertically unstable
+    - High risk of hemorrhage
+    - Blood loss: ~2000+ mL
+
+═══ APC — ANTEROPOSTERIOR COMPRESSION (OPEN BOOK) ═══
+
+  APC-I: Symphysis diastasis < 2.5 cm
+    - Symphyseal sprain or minor widening
+    - Anterior SI ligaments intact
+    - Stable
+    - Blood loss: ~500 mL
+
+  APC-II: Symphysis diastasis > 2.5 cm + anterior SI joint disruption
+    - Anterior SI ligaments torn
+    - Posterior SI ligaments intact (sacrospinous, sacrotuberous torn)
+    - "Open book" pelvis
+    - Rotationally unstable, vertically stable
+    - Blood loss: ~2000 mL
+
+  APC-III: Complete SI disruption (anterior + posterior ligaments)
+    - Complete posterior ring disruption
+    - Rotationally AND vertically unstable
+    - Highest risk of hemorrhage
+    - Blood loss: ~3000+ mL
+    - Associated with massive pelvic hemorrhage
+
+═══ VS — VERTICAL SHEAR ═══
+
+  VS: Vertical displacement of hemipelvis
+    - Complete disruption of all ligaments (anterior + posterior)
+    - Symphysis disrupted or vertical ramus fracture
+    - Sacral fracture or SI dislocation
+    - Vertical displacement visible on AP pelvis
+    - Completely unstable
+    - Blood loss: ~3000+ mL
+
+═══ CM — COMBINED MECHANISM ═══
+
+  CM: Combination of LC + APC or VS patterns
+    - Often seen in high-energy polytrauma
+    - Treat based on dominant instability pattern
+    - Highly unstable
+
+═══ STABILITY SUMMARY ═══
+  Stable:           LC-I, APC-I
+  Rotationally unstable: LC-II, APC-II
+  Completely unstable:   LC-III, APC-III, VS, CM
+
+═══ MANAGEMENT PRINCIPLES ═══
+  LC-I, APC-I: Non-operative (weight-bearing as tolerated)
+  LC-II: Percutaneous SI screw or anterior plate fixation
+  APC-II: Symphyseal plate + anterior SI screw fixation
+  LC-III, APC-III, VS: Pelvic binder emergently → operative fixation
+    - Anterior fixation (symphyseal plate / external fixator)
+    - Posterior fixation (SI screws, lumbopelvic fixation)
+  Hemodynamically unstable:
+    - Pelvic binder immediately
+    - Massive transfusion protocol
+    - Consider preperitoneal packing or angioembolization
+    - REBOA as bridge in extremis
+
+═══ ASSOCIATED INJURIES ═══
+  - Urethral/bladder injury (APC pattern, males)
+  - Vaginal laceration (open fracture)
+  - Rectal injury (open fracture — high mortality)
+  - Lumbosacral plexus injury (L5 root with sacral fractures)
+  - Hemorrhagic shock (posterior ring disruption)
+  - Morel-Lavallée lesion (closed degloving)
 """
             ),
 
