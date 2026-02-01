@@ -773,7 +773,6 @@ private struct AttachmentPreviewPane: View {
             showPreview = true
         } label: {
             Label("Preview", systemImage: "eye")
-                .frame(minWidth: 100)
         }
         .buttonStyle(.borderedProminent)
         #endif
@@ -782,7 +781,6 @@ private struct AttachmentPreviewPane: View {
             showAIAnalysis = true
         } label: {
             Label("AI Analyze", systemImage: "brain.head.profile")
-                .frame(minWidth: 100)
         }
         .buttonStyle(.borderedProminent)
         .tint(.purple)
@@ -791,7 +789,6 @@ private struct AttachmentPreviewPane: View {
             shareAttachment()
         } label: {
             Label("Share", systemImage: "square.and.arrow.up")
-                .frame(minWidth: 100)
         }
         .buttonStyle(.bordered)
 
@@ -799,7 +796,6 @@ private struct AttachmentPreviewPane: View {
             printAttachment()
         } label: {
             Label("Print", systemImage: "printer")
-                .frame(minWidth: 100)
         }
         .buttonStyle(.bordered)
 
@@ -807,7 +803,6 @@ private struct AttachmentPreviewPane: View {
             showDeleteConfirm = true
         } label: {
             Label("Delete", systemImage: "trash")
-                .frame(minWidth: 100)
         }
         .buttonStyle(.bordered)
     }
