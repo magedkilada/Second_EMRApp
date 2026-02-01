@@ -6,6 +6,8 @@ struct BackupRestoreView: View {
     @EnvironmentObject var store: EMRStore
     @EnvironmentObject var backupCenter: BackupCenter
     @EnvironmentObject var referencesStore: ReferencesStore
+    @EnvironmentObject var appointmentStore: AppointmentStore
+    @EnvironmentObject var physiciansStore: PhysiciansStore
 
     @State private var shareURL: URL? = nil
     @State private var password: String = ""
@@ -406,7 +408,8 @@ struct BackupRestoreView: View {
 
     private func createAndShare() {
         guard let pw = AutoBackupKeychain.load() else { return }
-        backupCenter.createBackup(store: store, referencesStore: referencesStore, password: pw)
+        backupCenter.createBackup(store: store, referencesStore: referencesStore, password: pw,
+                                  appointmentStore: appointmentStore, physiciansStore: physiciansStore)
         if backupCenter.lastError.isEmpty {
             backupFiles = backupCenter.listBackups()
             shareURL = backupCenter.lastCreatedBackupURL
@@ -415,7 +418,8 @@ struct BackupRestoreView: View {
 
     private func createManualBackup() {
         guard let pw = AutoBackupKeychain.load() else { return }
-        backupCenter.createBackup(store: store, referencesStore: referencesStore, password: pw)
+        backupCenter.createBackup(store: store, referencesStore: referencesStore, password: pw,
+                                  appointmentStore: appointmentStore, physiciansStore: physiciansStore)
         if backupCenter.lastError.isEmpty {
             showBackupSuccess = true
             backupFiles = backupCenter.listBackups()
@@ -424,7 +428,8 @@ struct BackupRestoreView: View {
 
     private func performMerge() {
         guard let url = pendingMergeURL else { return }
-        if let result = backupCenter.mergeFromFile(url, password: mergePassword, store: store, referencesStore: referencesStore) {
+        if let result = backupCenter.mergeFromFile(url, password: mergePassword, store: store, referencesStore: referencesStore,
+                                                   appointmentStore: appointmentStore, physiciansStore: physiciansStore) {
             mergeResultSummary = result.summary
             showMergeSuccess = true
         }
@@ -434,7 +439,8 @@ struct BackupRestoreView: View {
 
     private func performRestore() {
         guard let url = pendingRestoreURL else { return }
-        let success = backupCenter.restoreFromFile(url, password: restorePassword, store: store, referencesStore: referencesStore)
+        let success = backupCenter.restoreFromFile(url, password: restorePassword, store: store, referencesStore: referencesStore,
+                                                   appointmentStore: appointmentStore, physiciansStore: physiciansStore)
         if success {
             showRestoreSuccess = true
         }

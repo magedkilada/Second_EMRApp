@@ -113,6 +113,28 @@ public final class PhysiciansStore: ObservableObject {
         save()
     }
 
+    // MARK: - Backup & Merge
+
+    public func replaceAll(with newPhysicians: [Physician]) {
+        physicians = newPhysicians
+        if selectedPhysicianID == nil || !physicians.contains(where: { $0.id == selectedPhysicianID }) {
+            selectedPhysicianID = physicians.first(where: { !$0.isDeleted })?.id
+        }
+        save()
+    }
+
+    /// Merge incoming physicians by UUID (add if new).
+    public func mergePhysicians(with incoming: [Physician]) -> Int {
+        let existingIDs = Set(physicians.map { $0.id })
+        let newItems = incoming.filter { !existingIDs.contains($0.id) }
+
+        if !newItems.isEmpty {
+            physicians.append(contentsOf: newItems)
+            save()
+        }
+        return newItems.count
+    }
+
     // MARK: - Persistence (file-based for iCloud sync)
 
     private struct PhysiciansPayload: Codable {

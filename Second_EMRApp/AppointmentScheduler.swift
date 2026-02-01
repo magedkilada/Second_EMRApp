@@ -52,6 +52,19 @@ final class AppointmentStore: ObservableObject {
         save()
     }
 
+    /// Merge incoming appointments by UUID (add if new).
+    func mergeAppointments(with incoming: [Appointment]) -> Int {
+        let existingIDs = Set(appointments.map { $0.id })
+        let newItems = incoming.filter { !existingIDs.contains($0.id) }
+
+        if !newItems.isEmpty {
+            appointments.append(contentsOf: newItems)
+            appointments.sort { $0.startTime > $1.startTime }
+            save()
+        }
+        return newItems.count
+    }
+
     private func save() {
         do {
             let data = try JSONEncoder().encode(appointments)

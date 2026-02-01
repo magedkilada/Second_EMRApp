@@ -38,7 +38,8 @@ final class BackupCenter: ObservableObject {
 
     // MARK: - Create Backup
 
-    func createBackup(store: EMRStore, referencesStore: ReferencesStore, password: String) {
+    func createBackup(store: EMRStore, referencesStore: ReferencesStore, password: String,
+                      appointmentStore: AppointmentStore? = nil, physiciansStore: PhysiciansStore? = nil) {
         guard !isProcessing else { return }
         guard !password.isEmpty else { lastError = "Password is required."; return }
         isProcessing = true
@@ -50,7 +51,9 @@ final class BackupCenter: ObservableObject {
                 notes: store.notes,
                 attachments: store.attachments,
                 vitals: store.vitals,
-                references: referencesStore.items
+                references: referencesStore.items,
+                appointments: appointmentStore?.appointments ?? [],
+                physicians: physiciansStore?.physicians ?? []
             )
             let jsonData = try JSONEncoder().encode(payload)
             let encrypted = try BackupCrypto.encrypt(jsonData, password: password)
@@ -71,7 +74,8 @@ final class BackupCenter: ObservableObject {
 
     // MARK: - Restore from File
 
-    func restoreFromFile(_ fileURL: URL, password: String, store: EMRStore, referencesStore: ReferencesStore) -> Bool {
+    func restoreFromFile(_ fileURL: URL, password: String, store: EMRStore, referencesStore: ReferencesStore,
+                         appointmentStore: AppointmentStore? = nil, physiciansStore: PhysiciansStore? = nil) -> Bool {
         guard !isProcessing else { return false }
         guard !password.isEmpty else { lastError = "Password is required."; return false }
         isProcessing = true
@@ -93,6 +97,12 @@ final class BackupCenter: ObservableObject {
             store.setAttachments(payload.attachments)
             store.replaceAllVitals(with: payload.vitals)
             referencesStore.replaceAll(with: payload.references)
+            if !payload.appointments.isEmpty {
+                appointmentStore?.replaceAll(with: payload.appointments)
+            }
+            if !payload.physicians.isEmpty {
+                physiciansStore?.replaceAll(with: payload.physicians)
+            }
 
             lastRestoreDate = Date()
             return true
@@ -112,6 +122,8 @@ final class BackupCenter: ObservableObject {
         var attachmentsAdded: Int = 0
         var vitalsAdded: Int = 0
         var referencesAdded: Int = 0
+        var appointmentsAdded: Int = 0
+        var physiciansAdded: Int = 0
 
         var summary: String {
             var parts: [String] = []
@@ -122,13 +134,16 @@ final class BackupCenter: ObservableObject {
             if attachmentsAdded > 0 { parts.append("\(attachmentsAdded) new attachment\(attachmentsAdded == 1 ? "" : "s")") }
             if vitalsAdded > 0 { parts.append("\(vitalsAdded) new vitals entr\(vitalsAdded == 1 ? "y" : "ies")") }
             if referencesAdded > 0 { parts.append("\(referencesAdded) new reference\(referencesAdded == 1 ? "" : "s")") }
+            if appointmentsAdded > 0 { parts.append("\(appointmentsAdded) new appointment\(appointmentsAdded == 1 ? "" : "s")") }
+            if physiciansAdded > 0 { parts.append("\(physiciansAdded) new physician\(physiciansAdded == 1 ? "" : "s")") }
 
             if parts.isEmpty { return "No new data found — everything was already up to date." }
             return parts.joined(separator: ", ") + "."
         }
     }
 
-    func mergeFromFile(_ fileURL: URL, password: String, store: EMRStore, referencesStore: ReferencesStore) -> MergeResult? {
+    func mergeFromFile(_ fileURL: URL, password: String, store: EMRStore, referencesStore: ReferencesStore,
+                       appointmentStore: AppointmentStore? = nil, physiciansStore: PhysiciansStore? = nil) -> MergeResult? {
         guard !isProcessing else { return nil }
         guard !password.isEmpty else { lastError = "Password is required."; return nil }
         isProcessing = true
@@ -157,6 +172,12 @@ final class BackupCenter: ObservableObject {
             result.attachmentsAdded = store.mergeAttachments(with: payload.attachments)
             result.vitalsAdded = store.mergeVitals(with: payload.vitals)
             result.referencesAdded = referencesStore.mergeItems(with: payload.references)
+            if let apptStore = appointmentStore {
+                result.appointmentsAdded = apptStore.mergeAppointments(with: payload.appointments)
+            }
+            if let physStore = physiciansStore {
+                result.physiciansAdded = physStore.mergePhysicians(with: payload.physicians)
+            }
 
             return result
         } catch {
@@ -194,13 +215,15 @@ final class BackupCenter: ObservableObject {
 
     // MARK: - Auto-Backup
 
-    func autoBackupIfNeeded(store: EMRStore, referencesStore: ReferencesStore, password: String) {
+    func autoBackupIfNeeded(store: EMRStore, referencesStore: ReferencesStore, password: String,
+                            appointmentStore: AppointmentStore? = nil, physiciansStore: PhysiciansStore? = nil) {
         guard autoBackupEnabled, !isProcessing, !password.isEmpty else { return }
 
         // Throttle: only auto-backup once per hour
         if let last = lastBackupDate, Date().timeIntervalSince(last) < 3600 { return }
 
-        createBackup(store: store, referencesStore: referencesStore, password: password)
+        createBackup(store: store, referencesStore: referencesStore, password: password,
+                     appointmentStore: appointmentStore, physiciansStore: physiciansStore)
     }
 
     // MARK: - Helpers
