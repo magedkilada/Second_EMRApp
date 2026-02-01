@@ -8,6 +8,7 @@ import SwiftUI
 import QuickLook
 import UniformTypeIdentifiers
 import PhotosUI
+import PDFKit
 
 struct RecordsWorkspaceView: View {
     let patient: Patient
@@ -44,11 +45,7 @@ struct RecordsWorkspaceView: View {
     @State private var recordSearchText: String = ""
     @State private var searchScope: SearchScope = .thisPatient
 
-    enum LeftPanelMode: String {
-        case notes
-        case attachments
-    }
-    @State private var leftPanelMode: LeftPanelMode = .notes
+    // Left panel shows all sections (vitals, notes, attachments) together
 
     // MARK: - Derived data
 
@@ -126,30 +123,13 @@ struct RecordsWorkspaceView: View {
             }
             .navigationTitle("Records")
             .inlineNavigationTitle()
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Menu {
-                        Button {
-                            leftPanelMode = .notes
-                            selectedAttachmentID = nil
-                        } label: { Label("Notes", systemImage: "doc.text") }
-
-                        Button {
-                            leftPanelMode = .attachments
-                            selectedNoteID = nil
-                        } label: { Label("Attachments", systemImage: "paperclip") }
-                    } label: {
-                        Image(systemName: leftPanelMode == .attachments ? "paperclip" : "doc.text")
-                    }
-                }
-            }
             .sheet(isPresented: $showNewNoteSheet) { noteTypePickerSheet }
             .sheet(item: $workingVitals) { entry in
                 vitalsEntrySheet(entry: entry)
             }
             .fileImporter(
                 isPresented: $showFileImporter,
-                allowedContentTypes: [.pdf, .image],
+                allowedContentTypes: [.pdf, .image, .data],
                 allowsMultipleSelection: true
             ) { result in
                 handleAttachmentImport(result)
@@ -163,27 +143,11 @@ struct RecordsWorkspaceView: View {
             .onChange(of: selectedPhotoItems) { _, newItems in
                 handlePhotoImport(newItems)
             }
-            .confirmationDialog("Attachment Source", isPresented: $showAttachmentSourceMenu) {
-                Button("Files") {
-                    attachmentSourceIsPhotos = false
-                    showCategoryPicker = true
-                }
-                Button("Photos") {
-                    attachmentSourceIsPhotos = true
-                    showCategoryPicker = true
-                }
-                Button("Cancel", role: .cancel) {}
-            }
-            .confirmationDialog("Attachment Category", isPresented: $showCategoryPicker) {
-                Button("Medical Report") { pendingAttachmentCategory = .medicalReport; openPicker() }
-                Button("Radiology") { pendingAttachmentCategory = .radiology; openPicker() }
-                Button("Laboratory") { pendingAttachmentCategory = .laboratory; openPicker() }
-                Button("Special Tests (EEG etc.)") { pendingAttachmentCategory = .eeg; openPicker() }
-                Button("Cancel", role: .cancel) {}
-            }
+            // Attachment source/category dialogs removed — handled by inline Menu on paperclip button
             .onChange(of: selectedNoteID) { oldID, newID in
-                // Clean up the PREVIOUS note if it was left empty, not the new one
-                if let oldID, oldID != newID {
+                // Clean up the PREVIOUS note if it was left empty AND we're switching to another note
+                // Don't auto-delete when just clearing the selection (e.g. switching to attachments)
+                if let oldID, let _ = newID, oldID != newID {
                     autoDeleteEmptyNote(oldID)
                 }
             }
@@ -262,43 +226,68 @@ struct RecordsWorkspaceView: View {
             }
             .padding(.horizontal, 12)
 
-            Group {
-                if leftPanelMode == .notes {
-                    notesListWithVitals
-                } else {
-                    attachmentsList
-                }
-            }
-            .frame(maxHeight: .infinity)
+            unifiedRecordsList
+                .frame(maxHeight: .infinity)
         }
         .padding(.top, 4)
         .background(Color.systemGroupedBg)
     }
 
     private var topActionButtons: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: isCompact ? 8 : 14) {
             recordActionBtn(title: "Add Note", icon: "doc.badge.plus", color: .blue) { showNewNoteSheet = true }
             recordActionBtn(title: "Add Vitals", icon: "waveform.path.ecg", color: .green) { openNewVitalsEntry() }
-            recordActionBtn(title: "Attachments", icon: "paperclip", color: .orange) { showAttachmentSourceMenu = true }
+            attachmentMenuButton
         }
         .padding(.horizontal, 12)
     }
 
+    /// Attachment button styled to match Add Note / Add Vitals.
+    private var attachmentMenuButton: some View {
+        Menu {
+            Menu("Import Files") {
+                Button("Medical Report") { pendingAttachmentCategory = .medicalReport; attachmentSourceIsPhotos = false; openPicker() }
+                Button("Radiology") { pendingAttachmentCategory = .radiology; attachmentSourceIsPhotos = false; openPicker() }
+                Button("Laboratory") { pendingAttachmentCategory = .laboratory; attachmentSourceIsPhotos = false; openPicker() }
+                Button("Special Tests (EEG etc.)") { pendingAttachmentCategory = .eeg; attachmentSourceIsPhotos = false; openPicker() }
+                Button("Other") { pendingAttachmentCategory = .other; attachmentSourceIsPhotos = false; openPicker() }
+            }
+            Menu("Import Photos") {
+                Button("Medical Report") { pendingAttachmentCategory = .medicalReport; attachmentSourceIsPhotos = true; openPicker() }
+                Button("Radiology") { pendingAttachmentCategory = .radiology; attachmentSourceIsPhotos = true; openPicker() }
+                Button("Laboratory") { pendingAttachmentCategory = .laboratory; attachmentSourceIsPhotos = true; openPicker() }
+                Button("Special Tests (EEG etc.)") { pendingAttachmentCategory = .eeg; attachmentSourceIsPhotos = true; openPicker() }
+                Button("Other") { pendingAttachmentCategory = .other; attachmentSourceIsPhotos = true; openPicker() }
+            }
+        } label: {
+            VStack(spacing: isCompact ? 4 : 8) {
+                Image(systemName: "paperclip").font(.system(size: isCompact ? 18 : 26, weight: .semibold))
+                Text("Attach").font(isCompact ? .caption2 : .footnote).fontWeight(.semibold)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: isCompact ? 44 : 76)
+            .background(Color.orange.opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: isCompact ? 10 : 14))
+        }
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+    }
+
     private func recordActionBtn(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: 26, weight: .semibold))
-                Text(title).font(.footnote).fontWeight(.semibold)
+            VStack(spacing: isCompact ? 4 : 8) {
+                Image(systemName: icon).font(.system(size: isCompact ? 18 : 26, weight: .semibold))
+                Text(title).font(isCompact ? .caption2 : .footnote).fontWeight(.semibold)
             }
-            .frame(maxWidth: .infinity, minHeight: 76)
+            .frame(maxWidth: .infinity, minHeight: isCompact ? 44 : 76)
             .background(color.opacity(0.9))
             .foregroundStyle(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: isCompact ? 10 : 14))
         }
         .buttonStyle(.plain)
     }
 
-    private var notesListWithVitals: some View {
+    private var unifiedRecordsList: some View {
         List {
             if !vitalsForPatient.isEmpty {
                 Section("Recent Vitals") {
@@ -319,25 +308,31 @@ struct RecordsWorkspaceView: View {
                 }
             }
 
-            Section("This Patient") {
+            Section("Notes") {
                 ForEach(filteredNotes) { note in
                     Button { selectNote(note.id) } label: { NoteRow(note: note) }
                 }
             }
-        }
-        .listStyle(.plain)
-    }
 
-    private var attachmentsList: some View {
-        List(filteredAttachments) { att in
-            Button {
-                selectedAttachmentID = att.id
-                selectedNoteID = nil
-                leftPanelMode = .attachments
-            } label: {
-                AttachmentRow(attachment: att)
+            Section("Attachments") {
+                if filteredAttachments.isEmpty {
+                    Text("No attachments")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(filteredAttachments) { att in
+                        Button {
+                            selectedAttachmentID = att.id
+                            selectedNoteID = nil
+                        } label: {
+                            AttachmentRow(attachment: att)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
-            .buttonStyle(.plain)
         }
         .listStyle(.plain)
     }
@@ -470,7 +465,6 @@ struct RecordsWorkspaceView: View {
         } else {
             selectedNoteID = noteID
             selectedAttachmentID = nil
-            leftPanelMode = .notes
         }
     }
 
@@ -499,7 +493,6 @@ struct RecordsWorkspaceView: View {
         store.addNote(note)
         selectedNoteID = note.id
         selectedAttachmentID = nil
-        leftPanelMode = .notes
     }
 
     private func openPicker() {
@@ -510,17 +503,32 @@ struct RecordsWorkspaceView: View {
         }
     }
 
+    /// Persistent directory for attachment files — iCloud-aware.
+    private var attachmentsDir: URL {
+        iCloudSyncManager.shared.directoryURL(for: "AttachmentFiles")
+    }
+
     private func handleAttachmentImport(_ result: Result<[URL], Error>) {
         if case .success(let urls) = result {
             for url in urls {
+                // Access security-scoped resource and copy into app sandbox
+                let didStart = url.startAccessingSecurityScopedResource()
+                defer { if didStart { url.stopAccessingSecurityScopedResource() } }
+
+                let destName = "\(UUID().uuidString)_\(url.lastPathComponent)"
+                let destURL = attachmentsDir.appendingPathComponent(destName)
+                do {
+                    try FileManager.default.copyItem(at: url, to: destURL)
+                } catch {
+                    print("Failed to copy attachment: \(error)")
+                    continue
+                }
+
                 var att = Attachment(patientID: patient.id, type: pendingAttachmentCategory)
                 att.filename = url.lastPathComponent
-                att.fileURL = url
+                att.fileURL = destURL
                 store.addAttachment(att)
-                selectedAttachmentID = att.id
             }
-            leftPanelMode = .attachments
-            selectedNoteID = nil
         }
     }
 
@@ -533,17 +541,14 @@ struct RecordsWorkspaceView: View {
                             .replacingOccurrences(of: "/", with: "-")
                             .replacingOccurrences(of: ":", with: "-")
                             .replacingOccurrences(of: " ", with: "_")
-                        let tempURL = FileManager.default.temporaryDirectory
-                            .appendingPathComponent(filename)
-                        try? data.write(to: tempURL)
+                        let destName = "\(UUID().uuidString)_\(filename)"
+                        let destURL = attachmentsDir.appendingPathComponent(destName)
+                        try? data.write(to: destURL)
 
                         var att = Attachment(patientID: patient.id, type: pendingAttachmentCategory)
                         att.filename = filename
-                        att.fileURL = tempURL
+                        att.fileURL = destURL
                         store.addAttachment(att)
-                        selectedAttachmentID = att.id
-                        leftPanelMode = .attachments
-                        selectedNoteID = nil
                     }
                 }
             }
@@ -671,46 +676,85 @@ private struct AttachmentPreviewPane: View {
     let attachment: Attachment
     let onDelete: () -> Void
 
-    @State private var showQuickLook = false
+    @State private var showPreview = false
     @State private var showDeleteConfirm = false
+    @State private var showAIAnalysis = false
     @Environment(\.horizontalSizeClass) private var hSize
 
+    /// Computed every render — no stale @State issues.
+    private var fileOnDisk: URL? { attachment.resolvedFileURL }
+
+    private var shouldShowInline: Bool {
+        #if os(macOS)
+        return fileOnDisk != nil   // always show inline on Mac
+        #else
+        return showPreview && fileOnDisk != nil
+        #endif
+    }
+
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-
-            Image(systemName: attachment.type.iconName)
-                .font(.system(size: 64))
-                .foregroundStyle(attachment.type.displayColor)
-
-            Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
-                .font(.title3).bold()
-
-            Text(attachment.type.rawValue)
-                .font(.subheadline).foregroundStyle(.secondary)
-
-            if hSize == .compact {
-                // Vertical layout for iPhone
-                VStack(spacing: 12) {
-                    attachmentActionButtons
+        VStack(spacing: 0) {
+            // Header bar with filename and action buttons
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Image(systemName: attachment.type.iconName)
+                        .font(.title2)
+                        .foregroundStyle(attachment.type.displayColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
+                            .font(.headline)
+                        Text(attachment.type.rawValue)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
                 }
-            } else {
-                HStack(spacing: 16) {
+
+                HStack(spacing: 12) {
                     attachmentActionButtons
                 }
             }
+            .padding()
 
-            Spacer()
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showQuickLook) {
-            if let url = attachment.fileURL {
+            Divider()
+
+            // Inline preview area
+            if shouldShowInline, let url = fileOnDisk {
                 QuickLookPreview(url: url)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .id(url)  // force SwiftUI to recreate view when URL changes
+            } else if fileOnDisk == nil {
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.red.opacity(0.6))
+                    Text("File not found on disk")
+                        .font(.subheadline)
+                        .foregroundStyle(.red)
+                    if let stored = attachment.fileURL {
+                        Text(stored.lastPathComponent)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Text("No file URL available.")
-                    .padding()
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: attachment.type.iconName)
+                        .font(.system(size: 64))
+                        .foregroundStyle(attachment.type.displayColor.opacity(0.4))
+                    Text("Tap Preview to view this file")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .sheet(isPresented: $showAIAnalysis) {
+            AttachmentAISheet(attachment: attachment)
         }
         .alert("Delete Attachment?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
@@ -724,13 +768,24 @@ private struct AttachmentPreviewPane: View {
 
     @ViewBuilder
     private var attachmentActionButtons: some View {
+        #if os(iOS)
         Button {
-            showQuickLook = true
+            showPreview = true
         } label: {
             Label("Preview", systemImage: "eye")
                 .frame(minWidth: 100)
         }
         .buttonStyle(.borderedProminent)
+        #endif
+
+        Button {
+            showAIAnalysis = true
+        } label: {
+            Label("AI Analyze", systemImage: "brain.head.profile")
+                .frame(minWidth: 100)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.purple)
 
         Button {
             shareAttachment()
@@ -758,15 +813,328 @@ private struct AttachmentPreviewPane: View {
     }
 
     private func shareAttachment() {
-        guard let url = attachment.fileURL else { return }
+        guard let url = fileOnDisk else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             SharePrintPresenter.share(items: [url])
         }
     }
 
     private func printAttachment() {
-        guard let url = attachment.fileURL else { return }
+        guard let url = fileOnDisk else { return }
         SharePrintPresenter.printURL(url, jobName: attachment.filename)
+    }
+}
+
+// MARK: - Attachment AI Analysis Sheet
+
+private struct AttachmentAISheet: View {
+    let attachment: Attachment
+    @Environment(\.dismiss) private var dismiss
+
+    enum AIModel: String, CaseIterable {
+        case claude = "Claude"
+        case gpt = "GPT-4o"
+        case eegServer = "EEG Server"
+    }
+
+    @State private var selectedModel: AIModel = .claude
+    @State private var eegServerURL: String = EEGServerConfig.baseURL
+
+    /// Models available for this attachment type
+    private var availableModels: [AIModel] {
+        if attachment.type == .eeg {
+            return AIModel.allCases
+        } else {
+            return [.claude, .gpt]
+        }
+    }
+    @State private var prompt: String = ""
+    @State private var result: String = ""
+    @State private var isLoading = false
+    @State private var errorMessage: String = ""
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Model picker
+                HStack(spacing: 8) {
+                    Text("Model:").font(.caption).foregroundStyle(.secondary)
+                    Picker("Model", selection: $selectedModel) {
+                        ForEach(availableModels, id: \.self) { model in
+                            Text(model.rawValue).tag(model)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+
+                Divider().padding(.top, 8)
+
+                // EEG Server URL (only when EEG Server selected)
+                if selectedModel == .eegServer {
+                    HStack(spacing: 8) {
+                        Text("Server:").font(.caption).foregroundStyle(.secondary)
+                        TextField("http://localhost:5050", text: $eegServerURL)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                            .onChange(of: eegServerURL) { _, newValue in
+                                UserDefaults.standard.set(newValue, forKey: "EEG_SERVER_URL")
+                            }
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 6)
+                }
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        // Attachment info
+                        HStack(spacing: 12) {
+                            Image(systemName: attachment.type.iconName)
+                                .font(.title2)
+                                .foregroundStyle(attachment.type.displayColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
+                                    .font(.subheadline).bold()
+                                Text(attachment.type.rawValue)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(Color.secondarySystemGroupedBg)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                        // Prompt
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Prompt").font(.caption).foregroundStyle(.secondary)
+                            TextEditor(text: $prompt)
+                                .frame(minHeight: 60, maxHeight: 120)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+                        }
+
+                        // Send button
+                        Button {
+                            Task { await analyze() }
+                        } label: {
+                            HStack {
+                                if isLoading {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Image(systemName: selectedModel == .eegServer ? "waveform.path.ecg" : (selectedModel == .claude ? "brain.head.profile" : "brain"))
+                                }
+                                Text(isLoading ? "Analyzing..." : "Analyze with \(selectedModel.rawValue)")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .disabled(isLoading || prompt.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                        // Error
+                        if !errorMessage.isEmpty {
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                                Text(errorMessage).font(.caption).foregroundStyle(.red)
+                            }
+                        }
+
+                        // Result
+                        if !result.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("AI Analysis").font(.headline)
+                                    Spacer()
+                                    Button {
+                                        PlatformPasteboard.copy(result)
+                                    } label: {
+                                        Label("Copy", systemImage: "doc.on.doc").font(.caption)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(.secondary)
+                                }
+
+                                Text(result)
+                                    .font(.body)
+                                    .textSelection(.enabled)
+                                    .padding()
+                                    .background(Color.secondarySystemGroupedBg)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                                // Disclaimer
+                                Text("This AI analysis is for informational purposes only and should not replace clinical judgment.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                    .padding(8)
+                                    .background(Color.orange.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("AI Analyze")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .onAppear {
+                prompt = defaultPrompt(for: attachment.type)
+                if attachment.type == .eeg {
+                    selectedModel = .eegServer
+                }
+            }
+        }
+    }
+
+    private func defaultPrompt(for type: AttachmentType) -> String {
+        switch type {
+        case .eeg:
+            return "Analyze this EEG recording. Describe the background activity, any focal or generalized abnormalities, and provide an interpretation."
+        case .radiology:
+            return "Analyze this radiological image. Describe the findings and provide an impression."
+        case .laboratory:
+            return "Analyze these laboratory results. Identify any abnormal values and provide clinical significance."
+        case .medicalReport:
+            return "Analyze this medical document and summarize the key findings."
+        case .other:
+            return "Analyze this medical document and summarize the key findings."
+        }
+    }
+
+    private func analyze() async {
+        isLoading = true
+        errorMessage = ""
+
+        guard let fileURL = attachment.resolvedFileURL else {
+            errorMessage = "No file URL available for this attachment."
+            isLoading = false
+            return
+        }
+
+        do {
+            let response: String
+
+            if selectedModel == .eegServer {
+                // Send raw EEG file to local MNE-Python server
+                response = try await EEGAnalysisService().analyze(
+                    fileURL: fileURL,
+                    prompt: prompt
+                )
+            } else {
+                // Vision-based analysis (Claude / GPT)
+                let images = try loadImages(from: fileURL)
+                guard !images.isEmpty else {
+                    errorMessage = "Could not read image data from file."
+                    isLoading = false
+                    return
+                }
+
+                let system = """
+                You are an expert medical imaging and document analyst. Provide a thorough, \
+                structured analysis. Use appropriate medical terminology. Always note that this \
+                is an AI-assisted analysis and should be confirmed by a qualified specialist.
+                """
+
+                switch selectedModel {
+                case .claude:
+                    response = try await ClaudeService.shared.generateWithImages(
+                        system: system,
+                        userMessage: prompt,
+                        images: images,
+                        maxTokens: 4096
+                    )
+                case .gpt:
+                    response = try await OpenAIService.shared.generateWithImages(
+                        instructions: system,
+                        input: prompt,
+                        images: images,
+                        maxOutputTokens: 4096
+                    )
+                case .eegServer:
+                    response = "" // Already handled above
+                }
+            }
+
+            await MainActor.run { result = response }
+        } catch {
+            await MainActor.run { errorMessage = error.localizedDescription }
+        }
+
+        await MainActor.run { isLoading = false }
+    }
+
+    private func loadImages(from url: URL) throws -> [(data: Data, mediaType: String)] {
+        let ext = url.pathExtension.lowercased()
+
+        if ext == "pdf" {
+            return try renderPDFPages(url: url)
+        } else {
+            let data = try Data(contentsOf: url)
+            let imageExtensions = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "tiff", "tif", "bmp"]
+            guard imageExtensions.contains(ext) else {
+                throw NSError(domain: "Attachment", code: -2, userInfo: [
+                    NSLocalizedDescriptionKey: "This file type (.\(ext)) cannot be analyzed visually. AI analysis requires an image or PDF."
+                ])
+            }
+            let mediaType: String
+            switch ext {
+            case "png": mediaType = "image/png"
+            case "gif": mediaType = "image/gif"
+            case "webp": mediaType = "image/webp"
+            default: mediaType = "image/jpeg"
+            }
+            return [(data: data, mediaType: mediaType)]
+        }
+    }
+
+    private func renderPDFPages(url: URL) throws -> [(data: Data, mediaType: String)] {
+        guard let doc = PDFDocument(url: url) else {
+            throw NSError(domain: "PDF", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Could not open PDF document."
+            ])
+        }
+
+        var images: [(data: Data, mediaType: String)] = []
+        let maxPages = min(doc.pageCount, 5)
+
+        for i in 0..<maxPages {
+            guard let page = doc.page(at: i) else { continue }
+            let bounds = page.bounds(for: .mediaBox)
+            let scale: CGFloat = 1.5
+            let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+
+            #if os(iOS)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            let imageData = renderer.jpegData(withCompressionQuality: 0.6) { ctx in
+                ctx.cgContext.setFillColor(UIColor.white.cgColor)
+                ctx.fill(CGRect(origin: .zero, size: size))
+                ctx.cgContext.scaleBy(x: scale, y: scale)
+                page.draw(with: .mediaBox, to: ctx.cgContext)
+            }
+            images.append((data: imageData, mediaType: "image/jpeg"))
+            #else
+            let nsImage = NSImage(size: size)
+            nsImage.lockFocus()
+            if let ctx = NSGraphicsContext.current?.cgContext {
+                ctx.setFillColor(NSColor.white.cgColor)
+                ctx.fill(CGRect(origin: .zero, size: size))
+                ctx.scaleBy(x: scale, y: scale)
+                page.draw(with: .mediaBox, to: ctx)
+            }
+            nsImage.unlockFocus()
+            if let tiff = nsImage.tiffRepresentation,
+               let rep = NSBitmapImageRep(data: tiff),
+               let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.6]) {
+                images.append((data: jpeg, mediaType: "image/jpeg"))
+            }
+            #endif
+        }
+        return images
     }
 }
 

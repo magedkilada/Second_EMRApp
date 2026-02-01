@@ -104,12 +104,10 @@ public enum RecordType: String, Codable, CaseIterable, Identifiable {
             return """
             SUBJECTIVE:
             OBJECTIVE:
-            PHYSICAL EXAMINATION:
-            LABS / RADIOLOGY:
+              PHYSICAL EXAMINATION:
+              LABS / RADIOLOGY:
 
             ASSESSMENT:
-            1)
-            2)
 
             PLAN:
             """
@@ -244,6 +242,8 @@ public struct Attachment: Identifiable, Codable, Hashable {
     public var patientID: UUID
     public var type: AttachmentType = .other
     public var filename: String = ""
+    /// Relative path from the Documents directory (e.g. "AttachmentFiles/UUID_file.pdf").
+    /// Older data may still have an absolute URL stored — resolvedFileURL handles both.
     public var fileURL: URL?
     public var createdAt: Date = Date()
     public var isDeleted: Bool = false
@@ -251,6 +251,52 @@ public struct Attachment: Identifiable, Codable, Hashable {
     public init(patientID: UUID, type: AttachmentType = .other) {
         self.patientID = patientID
         self.type = type
+    }
+
+    /// Resolves the file URL at runtime so it survives app-container changes and cross-device sync.
+    public var resolvedFileURL: URL? {
+        let fm = FileManager.default
+        let attachDir = iCloudSyncManager.shared.directoryURL(for: "AttachmentFiles")
+
+        // 1. If the stored absolute URL still exists on disk, use it.
+        if let url = fileURL, fm.fileExists(atPath: url.path) {
+            return url
+        }
+
+        // 2. Try the standardized path (resolves symlinks / percent-encoding differences).
+        if let url = fileURL {
+            let standardized = url.standardizedFileURL
+            if fm.fileExists(atPath: standardized.path) {
+                return standardized
+            }
+        }
+
+        // 3. Try reconstructing from the last path component in current AttachmentFiles dir.
+        if let url = fileURL {
+            let name = url.lastPathComponent
+            let candidate = attachDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            // Also try percent-decoded version
+            if let decoded = name.removingPercentEncoding, decoded != name {
+                let candidate2 = attachDir.appendingPathComponent(decoded)
+                if fm.fileExists(atPath: candidate2.path) {
+                    return candidate2
+                }
+            }
+        }
+
+        // 4. Fallback: search directory for a file matching the filename.
+        if !filename.isEmpty {
+            if let contents = try? fm.contentsOfDirectory(atPath: attachDir.path) {
+                if let match = contents.first(where: { $0.hasSuffix(filename) || $0 == filename }) {
+                    return attachDir.appendingPathComponent(match)
+                }
+            }
+        }
+
+        return nil
     }
 }
 

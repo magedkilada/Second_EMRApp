@@ -40,6 +40,33 @@ final class EMRStore: ObservableObject {
         if selectedPatientID == nil {
             selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
         }
+
+        // Register for iCloud remote changes
+        let sync = iCloudSyncManager.shared
+        sync.registerForChanges(filename: "patients.json") { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if let p = self.load([Patient].self, from: self.patientsURL) { self.patients = p }
+            }
+        }
+        sync.registerForChanges(filename: "notes.json") { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if let n = self.load([RecordNote].self, from: self.notesURL) { self.notes = n }
+            }
+        }
+        sync.registerForChanges(filename: "attachments.json") { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if let a = self.load([Attachment].self, from: self.attachmentsURL) { self.attachments = a }
+            }
+        }
+        sync.registerForChanges(filename: "vitals.json") { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if let v = self.load([SmartVitalsEntry].self, from: self.vitalsURL) { self.vitals = v }
+            }
+        }
     }
 
     // MARK: - Public API (Patients)
@@ -193,16 +220,12 @@ final class EMRStore: ObservableObject {
         backupCenter.autoBackupIfNeeded(store: self, referencesStore: refStore, password: pw)
     }
 
-    // MARK: - File URLs
+    // MARK: - File URLs (iCloud-aware)
 
-    private var documentsURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-    }
-
-    private var patientsURL: URL { documentsURL.appendingPathComponent("patients.json") }
-    private var notesURL: URL { documentsURL.appendingPathComponent("notes.json") }
-    private var attachmentsURL: URL { documentsURL.appendingPathComponent("attachments.json") }
-    private var vitalsURL: URL { documentsURL.appendingPathComponent("vitals.json") }
+    private var patientsURL: URL { iCloudSyncManager.shared.url(for: "patients.json") }
+    private var notesURL: URL { iCloudSyncManager.shared.url(for: "notes.json") }
+    private var attachmentsURL: URL { iCloudSyncManager.shared.url(for: "attachments.json") }
+    private var vitalsURL: URL { iCloudSyncManager.shared.url(for: "vitals.json") }
 
     // MARK: - JSON helpers
 

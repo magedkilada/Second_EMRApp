@@ -46,8 +46,9 @@ public final class PhysiciansStore: ObservableObject {
     @Published public var physicians: [Physician] = []
     @Published public var selectedPhysicianID: UUID? = nil
 
-    private let physiciansKey = "physicians_data_v2"
-    private let selectedIDKey = "physician_selected_id_v2"
+    private var fileURL: URL {
+        iCloudSyncManager.shared.url(for: "physicians.json")
+    }
 
     public init() {
         load()
@@ -63,6 +64,10 @@ public final class PhysiciansStore: ObservableObject {
             save()
         } else if selectedPhysicianID == nil {
             selectedPhysicianID = physicians.first(where: { !$0.isDeleted })?.id
+        }
+
+        iCloudSyncManager.shared.registerForChanges(filename: "physicians.json") { [weak self] in
+            Task { @MainActor in self?.load() }
         }
     }
 
@@ -108,26 +113,48 @@ public final class PhysiciansStore: ObservableObject {
         save()
     }
 
-    // MARK: - Persistence
+    // MARK: - Persistence (file-based for iCloud sync)
+
+    private struct PhysiciansPayload: Codable {
+        var physicians: [Physician]
+        var selectedPhysicianID: UUID?
+    }
+
     public func save() {
-        if let data = try? JSONEncoder().encode(physicians) {
-            UserDefaults.standard.set(data, forKey: physiciansKey)
-        }
-        if let id = selectedPhysicianID {
-            UserDefaults.standard.set(id.uuidString, forKey: selectedIDKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: selectedIDKey)
+        do {
+            let payload = PhysiciansPayload(physicians: physicians, selectedPhysicianID: selectedPhysicianID)
+            let data = try JSONEncoder().encode(payload)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            print("[PhysiciansStore] save error: \(error)")
         }
     }
 
     private func load() {
-        if let data = UserDefaults.standard.data(forKey: physiciansKey),
+        // Try file-based storage first
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            do {
+                let data = try Data(contentsOf: fileURL)
+                let payload = try JSONDecoder().decode(PhysiciansPayload.self, from: data)
+                physicians = payload.physicians
+                selectedPhysicianID = payload.selectedPhysicianID
+                return
+            } catch {
+                print("[PhysiciansStore] file load error: \(error)")
+            }
+        }
+
+        // Migrate from UserDefaults (one-time)
+        if let data = UserDefaults.standard.data(forKey: "physicians_data_v2"),
            let decoded = try? JSONDecoder().decode([Physician].self, from: data) {
             physicians = decoded
-        }
-        if let s = UserDefaults.standard.string(forKey: selectedIDKey),
-           let id = UUID(uuidString: s) {
-            selectedPhysicianID = id
+            if let s = UserDefaults.standard.string(forKey: "physician_selected_id_v2"),
+               let id = UUID(uuidString: s) {
+                selectedPhysicianID = id
+            }
+            save()
+            UserDefaults.standard.removeObject(forKey: "physicians_data_v2")
+            UserDefaults.standard.removeObject(forKey: "physician_selected_id_v2")
         }
     }
 }

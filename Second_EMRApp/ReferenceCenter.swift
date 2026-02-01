@@ -44,7 +44,7 @@ public struct ReferenceItem: Identifiable, Hashable, Codable {
     public var fileURL: URL? {
         guard let path = filePath, !path.isEmpty else { return nil }
 
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let docs = iCloudSyncManager.shared.baseURL
 
         // Support both relative and legacy absolute paths
         let url: URL
@@ -71,31 +71,27 @@ public final class ReferencesStore: ObservableObject {
 
     private static let fileName = "references.json"
 
-    /// Local Documents directory for all reference data.
+    /// Base directory — iCloud container if available, else local Documents.
     public static var baseDirectory: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        iCloudSyncManager.shared.baseURL
     }
 
     /// Directory for imported reference files (PDFs, etc.)
     public static var referenceFilesDirectory: URL {
-        let dir = baseDirectory.appendingPathComponent("ReferenceFiles")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        iCloudSyncManager.shared.directoryURL(for: "ReferenceFiles")
     }
 
     /// Directory for imported reference photos
     public static var referencePhotosDirectory: URL {
-        let dir = baseDirectory.appendingPathComponent("ReferencePhotos")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        iCloudSyncManager.shared.directoryURL(for: "ReferencePhotos")
     }
 
     private static var fileURL: URL {
-        baseDirectory.appendingPathComponent(fileName)
+        iCloudSyncManager.shared.url(for: fileName)
     }
 
     private static let seedVersionKey = "ReferencesStore_SeedVersion"
-    private static let currentSeedVersion = 3  // Bump this when adding new default scales
+    private static let currentSeedVersion = 6  // Bump this when adding new default scales
 
     public init() {
         loadFromDisk()
@@ -105,6 +101,10 @@ public final class ReferencesStore: ObservableObject {
             UserDefaults.standard.set(Self.currentSeedVersion, forKey: Self.seedVersionKey)
         } else {
             seedNewDefaultsIfNeeded()
+        }
+
+        iCloudSyncManager.shared.registerForChanges(filename: "references.json") { [weak self] in
+            Task { @MainActor in self?.loadFromDisk() }
         }
     }
 
@@ -980,6 +980,722 @@ Based on mechanism of injury and vector of force
   - Lumbosacral plexus injury (L5 root with sacral fractures)
   - Hemorrhagic shock (posterior ring disruption)
   - Morel-Lavallée lesion (closed degloving)
+"""
+            ),
+
+            // ── 14. Harvard / ENLS / BTF ICP Protocol ──────────────────
+            ReferenceItem(
+                title: "Harvard / ENLS / BTF ICP Protocol with Weight-Based Dosing & CRRT/HD Addendum",
+                category: .guidelines,
+                body:
+"""
+Harvard / ENLS / BTF ICP Management Protocol
+with Weight-Based Dosing & CRRT/HD Addendum
+
+═══ GOALS ═══
+  ICP < 22 mmHg
+  CPP 60–70 mmHg (adults)
+  CPP 40–50 mmHg (pediatric)
+  PbtO₂ > 20 mmHg (if monitored)
+  Serum Na⁺ target: 145–155 mEq/L (for hyperosmolar therapy)
+  Serum Osm target: 300–320 mOsm/L
+
+═══ TIER 0 — GENERAL MEASURES (ALL PATIENTS) ═══
+  • Head of bed 30° elevation
+  • Head midline (avoid jugular venous obstruction)
+  • Loosen cervical collar if present
+  • Normothermia (T < 38°C; treat fever aggressively)
+  • Normoglycemia (glucose 100–180 mg/dL)
+  • Normocarbia (PaCO₂ 35–40 mmHg)
+  • Adequate sedation and analgesia
+  • Seizure prophylaxis: Levetiracetam 500–1000 mg IV q12h × 7 days
+  • Avoid hypotension: MAP > 80 mmHg
+  • ICP monitor / EVD placed per BTF criteria
+
+═══ TIER 1 — FIRST-LINE ICP MANAGEMENT ═══
+(ICP > 22 mmHg for > 5 minutes)
+
+  1. CSF Drainage via EVD
+     • Drain 3–5 mL CSF, reassess
+     • Keep EVD at 10–15 cmH₂O above tragus
+     • Monitor drainage volume (max ~20 mL/hr)
+
+  2. Sedation Optimization
+     • Propofol 20–75 mcg/kg/min (preferred for neuro exams)
+       OR
+     • Midazolam 0.02–0.1 mg/kg/hr
+     • Fentanyl 0.5–2 mcg/kg/hr for analgesia
+     • Target RASS -2 to -3
+
+  3. Hyperosmolar Therapy (First-Line Bolus)
+     ┌─────────────────────────────────────────────┐
+     │ Hypertonic Saline (23.4%)                   │
+     │ Dose: 0.5–1 mL/kg IV bolus over 10–20 min  │
+     │ via central line ONLY                        │
+     │ Max single dose: 30 mL (for 23.4%)          │
+     │ Check Na⁺ q4–6h; hold if Na⁺ > 160 mEq/L   │
+     │ Check serum Osm q6h; hold if > 320 mOsm/L  │
+     └─────────────────────────────────────────────┘
+     ┌─────────────────────────────────────────────┐
+     │ Alternative: 3% NaCl infusion               │
+     │ 150–250 mL bolus over 15–20 min             │
+     │ OR continuous 0.5–1 mL/kg/hr                │
+     │ Peripheral or central line OK               │
+     └─────────────────────────────────────────────┘
+     ┌─────────────────────────────────────────────┐
+     │ Mannitol 20%                                │
+     │ Dose: 0.25–1 g/kg IV bolus over 15–20 min  │
+     │ (1 g/kg = 5 mL/kg of 20% mannitol)         │
+     │ May repeat q4–6h                            │
+     │ Hold if serum Osm > 320 mOsm/L             │
+     │ Hold if osmolar gap > 20                    │
+     │ Replace urinary losses (UOP may surge)      │
+     │ ⚠ Avoid in hypotension / hypovolemia       │
+     └─────────────────────────────────────────────┘
+
+═══ TIER 2 — SECOND-LINE ICP MANAGEMENT ═══
+(Refractory to Tier 1 after 15–30 min)
+
+  4. Neuromuscular Blockade
+     • Cisatracurium 0.15 mg/kg bolus → 1–3 mcg/kg/min infusion
+       OR
+     • Vecuronium 0.1 mg/kg bolus → 0.05–0.1 mg/kg/hr
+     • Train-of-four monitoring (target 1–2 twitches)
+     • Must have continuous EEG if paralyzed + comatose
+
+  5. Moderate Hyperventilation
+     • PaCO₂ 30–35 mmHg (brief, < 6 hours if possible)
+     • ⚠ Avoid PaCO₂ < 30 mmHg (risk of cerebral ischemia)
+     • Monitor PbtO₂ or jugular venous O₂ sat if available
+
+  6. Repeat Hyperosmolar Boluses
+     • Alternate HTS and mannitol if Na⁺ and Osm allow
+     • Recheck labs q4h during active titration
+
+═══ TIER 3 — THIRD-LINE / RESCUE THERAPIES ═══
+(Refractory ICP despite Tier 1 + 2)
+
+  7. Barbiturate Coma
+     ┌─────────────────────────────────────────────┐
+     │ Pentobarbital                               │
+     │ Load: 5–10 mg/kg IV over 30 min             │
+     │ Then: 1–3 mg/kg/hr infusion                 │
+     │ Target: EEG burst suppression               │
+     │ (3–5 bursts per minute)                     │
+     │ Check level q12–24h (target 30–40 mcg/mL)   │
+     │ ⚠ Expect hypotension → vasopressors ready   │
+     │ ⚠ Immunosuppression risk with prolonged use  │
+     └─────────────────────────────────────────────┘
+     Alternative: Thiopental 3–5 mg/kg load → 3–5 mg/kg/hr
+
+  8. Decompressive Craniectomy (DC)
+     • Unilateral: ≥ 12 × 15 cm (frontotemporoparietal)
+     • Bifrontal: per DECRA / RESCUEicp criteria
+     • Consider if: age < 60, GCS 4–8, refractory ICP
+     • Within 72 hours of injury preferred
+
+  9. Therapeutic Hypothermia (if available)
+     • Target 33–35°C core temperature
+     • Cooling blanket / intravascular catheter
+     • Duration 24–48 hours
+     • Rewarm slowly (0.25°C/hr)
+     • ⚠ Monitor for coagulopathy, arrhythmia, infection
+
+═══ WEIGHT-BASED QUICK REFERENCE (70 kg Adult) ═══
+
+  Drug                   Dose                  70 kg Example
+  ─────────────────────  ────────────────────  ────────────────
+  23.4% HTS              0.5–1 mL/kg bolus    35–70 mL
+  3% NaCl                150–250 mL bolus     150–250 mL
+  Mannitol 20%           0.25–1 g/kg          17.5–70 g
+                         (= 1.25–5 mL/kg)     (88–350 mL)
+  Propofol               20–75 mcg/kg/min     1.4–5.3 mg/min
+  Midazolam              0.02–0.1 mg/kg/hr    1.4–7 mg/hr
+  Fentanyl               0.5–2 mcg/kg/hr      35–140 mcg/hr
+  Cisatracurium bolus    0.15 mg/kg           10.5 mg
+  Cisatracurium gtt      1–3 mcg/kg/min       4.2–12.6 mg/hr
+  Pentobarbital load     5–10 mg/kg           350–700 mg
+  Pentobarbital gtt      1–3 mg/kg/hr         70–210 mg/hr
+  Levetiracetam          500–1000 mg q12h     500–1000 mg
+
+═══ CRRT / HD ADDENDUM ═══
+(For patients on Continuous Renal Replacement Therapy
+ or Intermittent Hemodialysis)
+
+  General Principles:
+  • Mannitol is dialyzable — AVOID in patients on CRRT/HD
+    (rapidly cleared → rebound ICP elevation)
+  • Hypertonic saline is the preferred osmotic agent in CRRT/HD
+  • CRRT may inadvertently lower serum Na⁺ → risk ICP spikes
+  • Coordinate Na⁺ management with nephrology daily
+
+  Hypertonic Saline in CRRT/HD:
+  • Use 23.4% or 3% NaCl as primary osmotic agent
+  • Monitor Na⁺ q4h (more frequently than standard)
+  • Request high-sodium replacement fluid (Na⁺ 145–155 mEq/L)
+  • Consider Na⁺-enriched dialysate (Na⁺ 150–155 mEq/L)
+  • Target serum Na⁺: 150–155 mEq/L in active ICP crisis
+
+  Mannitol Considerations:
+  • If mannitol MUST be used → give immediately AFTER HD session
+  • In CRRT: mannitol will be cleared continuously → ineffective
+  • Osmolar gap monitoring unreliable during CRRT
+
+  Drug Clearance in CRRT/HD:
+  ┌───────────────────────────────────────────────────┐
+  │ Drug            CRRT Cleared?   HD Cleared?       │
+  │ ──────────────  ─────────────   ──────────────    │
+  │ Mannitol        Yes (avoid)     Yes (avoid)       │
+  │ HTS (NaCl)      Partially*      Partially*        │
+  │ Levetiracetam   Yes             Yes               │
+  │   → Supplement 250–500 mg after HD session        │
+  │   → Increase to 500–1000 mg q8h during CRRT      │
+  │ Propofol        No              No                │
+  │ Midazolam       No              No                │
+  │ Fentanyl        No              No                │
+  │ Pentobarbital   No              No                │
+  │ Cisatracurium   No (Hofmann)    No                │
+  │ Phenytoin       No              No                │
+  │ Lacosamide      Yes             Yes               │
+  │   → Supplement 50% dose after HD                  │
+  └───────────────────────────────────────────────────┘
+  * Na⁺ clearance depends on dialysate/replacement fluid Na⁺
+
+  ICP Monitoring During HD:
+  • ICP may spike during HD due to osmotic shifts
+  • Use slow low-efficiency dialysis (SLED) if possible
+  • Pre-treat with 23.4% HTS 30 min before HD session
+  • Avoid rapid ultrafiltration (limit < 2 L/session)
+  • Consider switching to CRRT if ICP unstable during HD
+
+═══ MONITORING CHECKLIST ═══
+  □ ICP waveform quality / transducer level
+  □ CPP calculation (MAP – ICP) documented hourly
+  □ Serum Na⁺ q4–6h (q4h if on hyperosmolar therapy)
+  □ Serum Osm q6–8h (calculate osmolar gap)
+  □ ABG q4–6h (PaCO₂ target)
+  □ Continuous EEG if on paralytics or barbiturate coma
+  □ PbtO₂ > 20 mmHg (if monitored)
+  □ Pupillary exam q1h (document size and reactivity)
+  □ CT head if ICP refractory or new deficit
+  □ Daily labs: BMP, Mg, Phos, CBC, coags, LFTs
+
+═══ REFERENCES ═══
+  1. Carney N, et al. Guidelines for the Management of Severe TBI, 4th Ed.
+     Brain Trauma Foundation, 2016.
+  2. Neurocritical Care Society / ENLS Protocols, 2023.
+  3. Harvard Neurosurgery ICP Management Algorithm.
+  4. Rabinstein AA. Treatment of Cerebral Edema. Neurologist, 2006.
+  5. DECRA Trial — Cooper DJ, et al. NEJM, 2011.
+  6. RESCUEicp Trial — Hutchinson PJ, et al. NEJM, 2016.
+"""
+            ),
+
+            // ── 15. Developmental Milestones (Infants to 5 Years) ───────
+            ReferenceItem(
+                title: "Developmental Milestones (Infants to 5 Years)",
+                category: .guidelines,
+                body:
+"""
+Developmental Milestones — Infants to 5 Years
+Based on CDC / AAP 2022 Revised Milestones
+
+═══ 2 MONTHS ═══
+  Gross Motor:   Lifts head when on tummy
+  Fine Motor:    Hands mostly open (fists relaxing)
+  Language:      Coos, makes gurgling sounds
+  Cognitive:     Begins to follow objects with eyes
+  Social:        First social smile; watches faces closely
+  ⚠ Red flags:   No response to loud sounds; does not watch things move;
+                 does not smile at people; cannot hold head up on tummy
+
+═══ 4 MONTHS ═══
+  Gross Motor:   Holds head steady unsupported; pushes up on elbows on tummy
+  Fine Motor:    Reaches for toys with one hand; brings hands to mouth
+  Language:      Babbles with expression ("ah-goo"); copies sounds
+  Cognitive:     Reaches for a toy; watches faces closely
+  Social:        Spontaneous smile; enjoys playing; copies movements
+  ⚠ Red flags:   Does not watch things move; no social smile;
+                 cannot hold head steady; no cooing or babbling;
+                 does not bring things to mouth
+
+═══ 6 MONTHS ═══
+  Gross Motor:   Rolls over (both directions); begins to sit without support
+  Fine Motor:    Raking grasp; passes objects hand to hand
+  Language:      Strings vowels together ("ah", "eh", "oh");
+                 responds to own name; makes sounds to show joy/displeasure
+  Cognitive:     Brings things to mouth; shows curiosity; tries to get
+                 things out of reach
+  Social:        Knows familiar faces; likes to play with others;
+                 responds to emotions
+  ⚠ Red flags:   No reaching for things; no response to sounds;
+                 no vowel sounds; does not roll; seems stiff or floppy;
+                 no affection for caregivers
+
+═══ 9 MONTHS ═══
+  Gross Motor:   Sits without support; pulls to stand; crawls
+  Fine Motor:    Pincer grasp developing; picks up small objects
+                 between thumb and index finger
+  Language:      Understands "no"; makes many different consonant sounds
+                 ("mama", "baba", "dada" — non-specific)
+  Cognitive:     Watches path of something as it falls; looks for hidden
+                 objects (object permanence); plays peek-a-boo
+  Social:        May be clingy with familiar adults; has favorite toys;
+                 stranger anxiety
+  ⚠ Red flags:   Does not bear weight on legs with support; does not sit
+                 with help; no babbling ("mama", "baba"); no back-and-forth
+                 gestures; does not respond to own name; does not recognize
+                 familiar people; does not look where you point
+
+═══ 12 MONTHS ═══
+  Gross Motor:   Pulls to stand; cruises along furniture;
+                 may take first steps
+  Fine Motor:    Neat pincer grasp; puts things in/out of container;
+                 releases objects voluntarily
+  Language:      1–3 words with meaning ("mama", "dada" — specific);
+                 tries to say words you say; uses simple gestures
+                 (waving, shaking head)
+  Cognitive:     Explores objects (shaking, banging, throwing);
+                 finds hidden things; follows simple directions
+                 ("pick up the toy")
+  Social:        Cries when parent leaves (separation anxiety);
+                 shows fear in some situations; hands you a book to read;
+                 repeats actions that get attention
+  ⚠ Red flags:   Does not crawl; cannot stand with support;
+                 no single words; does not point to things;
+                 does not learn gestures (wave, shake head);
+                 loses skills previously had
+
+═══ 15 MONTHS ═══
+  Gross Motor:   Walks independently (most children)
+  Fine Motor:    Stacks 2 blocks; scribbles with crayon
+  Language:      3–5 words; points to show you something interesting;
+                 looks at familiar object when named
+  Cognitive:     Explores objects in different ways; copies other children
+  Social:        Shows affection; claps when excited; hugs stuffed toy;
+                 shows you an object they like
+  ⚠ Red flags:   Does not point; does not walk; no words;
+                 does not notice when caregiver leaves or returns
+
+═══ 18 MONTHS ═══
+  Gross Motor:   Walks independently; may run stiffly; climbs on/off
+                 furniture without help
+  Fine Motor:    Stacks 3–4 blocks; turns pages of book (2–3 at a time);
+                 drinks from cup; eats with spoon (messy)
+  Language:      At least 10–20 words; points to show others something
+                 interesting; says "no" and shakes head
+  Cognitive:     Knows what ordinary things are (phone, brush, spoon);
+                 points to get attention; shows interest in a doll by
+                 feeding it; points to one body part
+  Social:        May have temper tantrums; may be afraid of strangers;
+                 shows affection; plays simple pretend (feeding doll);
+                 may cling in new situations
+  ⚠ Red flags:   Does not point at things; does not walk;
+                 fewer than 6 words; does not know familiar objects;
+                 does not copy others; does not gain new words;
+                 loses skills previously had
+
+═══ 2 YEARS (24 MONTHS) ═══
+  Gross Motor:   Kicks a ball; begins to run; walks up stairs with support
+  Fine Motor:    Stacks 6+ blocks; turns pages one at a time;
+                 turns door handles
+  Language:      50+ words; 2-word phrases ("more milk", "mama go");
+                 points to things in a book; knows at least 2 body parts
+  Cognitive:     Follows 2-step instructions ("pick up toy and put it
+                 on the shelf"); beginning make-believe play;
+                 sorts shapes and colors
+  Social:        Gets excited with other children; shows defiant behavior;
+                 plays alongside other children (parallel play);
+                 increasing independence
+  ⚠ Red flags:   Does not use 2-word phrases (non-echoed);
+                 does not know common object functions (phone, brush);
+                 does not copy actions or words; does not walk steadily;
+                 loses skills previously had
+
+═══ 30 MONTHS ═══
+  Gross Motor:   Jumps off the ground with both feet
+  Fine Motor:    Turns book pages one at a time; uses hands to twist things
+                 (doorknobs, jar lids)
+  Language:      Says about 50+ words; 2-word sentences;
+                 names items in a picture book ("cat", "dog")
+  Cognitive:     Uses things with switches, buttons, or moving parts;
+                 plays with more than one toy at a time
+  Social:        Plays next to other children; shows you what they can do
+                 ("look at me!"); follows simple routines with verbal prompt
+  ⚠ Red flags:   Does not use 2-word phrases; does not know what to do
+                 with common objects; does not copy actions or words;
+                 does not follow simple instructions
+
+═══ 3 YEARS ═══
+  Gross Motor:   Climbs well; runs easily; pedals tricycle;
+                 walks up/down stairs (one foot per step)
+  Fine Motor:    Draws a circle; turns pages one at a time;
+                 builds tower of 9+ blocks; turns rotating handles
+  Language:      200–1000 words; 3-word sentences; tells you name, age, sex;
+                 names familiar friends; strangers can understand most words;
+                 carries on a conversation using 2–3 sentences
+  Cognitive:     Works 3–4 piece puzzles; copies a circle;
+                 turns book pages one at a time; screws/unscrews jar lids;
+                 understands "two"; plays make-believe with dolls, animals
+  Social:        Takes turns in games; shows concern for crying friend;
+                 shows affection for friends without prompting;
+                 dresses/undresses self (some help)
+  ⚠ Red flags:   Falls a lot or has trouble with stairs;
+                 drools or very unclear speech; cannot work simple toys;
+                 does not speak in sentences; does not understand simple
+                 instructions; does not play pretend;
+                 does not want to play with other children or toys;
+                 does not make eye contact; loses skills previously had
+
+═══ 4 YEARS ═══
+  Gross Motor:   Hops on one foot; catches a bounced ball most of the time;
+                 walks up/down stairs without support
+  Fine Motor:    Draws a person with 2–4 body parts;
+                 uses scissors; begins to copy some capital letters;
+                 draws squares and begins to copy
+  Language:      Tells stories; speaks in sentences of 5–6 words;
+                 says first and last name; uses future tense;
+                 sings a song or says a poem from memory
+  Cognitive:     Names some colors and numbers; understands counting;
+                 begins to understand time; remembers parts of a story;
+                 understands "same" and "different"; plays board/card games
+  Social:        Enjoys doing new things; plays "Mom" and "Dad";
+                 more and more creative with make-believe play;
+                 cooperates with other children; talks about likes/interests;
+                 difficult to distinguish real from make-believe
+  ⚠ Red flags:   Cannot jump in place; has trouble scribbling;
+                 no interest in interactive games or make-believe;
+                 ignores other children; resists dressing, sleeping, toileting;
+                 cannot retell a favorite story; does not follow 3-step
+                 instructions; does not understand "same" and "different";
+                 does not use "me" and "you" correctly;
+                 speech is not understandable to strangers;
+                 loses skills previously had
+
+═══ 5 YEARS ═══
+  Gross Motor:   Stands on one foot ≥ 10 seconds; hops; may skip;
+                 can do a somersault; swings and climbs
+  Fine Motor:    Draws a person with ≥ 6 body parts;
+                 prints some letters and numbers; copies a triangle;
+                 uses fork and spoon; may tie shoes
+  Language:      Speaks in sentences of 6+ words; tells a story with
+                 full sentences; uses future tense; says name and address;
+                 speech fully intelligible
+  Cognitive:     Counts 10+ things; draws a person with ≥ 6 parts;
+                 prints some letters; copies a triangle;
+                 knows about everyday things (money, food, appliances);
+                 understands right from left (emerging)
+  Social:        Wants to please friends; wants to be like friends;
+                 more likely to agree with rules; likes to sing, dance, act;
+                 can distinguish real from make-believe;
+                 shows more independence; can be demanding and cooperative
+  ⚠ Red flags:   Does not show a wide range of emotions;
+                 extremely withdrawn; easily distracted; cannot focus
+                 on one activity for > 5 minutes; does not respond to people;
+                 cannot tell what is real and what is make-believe;
+                 does not play a variety of games and activities;
+                 cannot give first and last name; does not draw pictures;
+                 cannot brush teeth, wash/dry hands, or undress
+                 without help; loses skills previously had
+
+═══ PRIMITIVE REFLEXES (Neurology) ═══
+  Reflex                  Appears    Disappears
+  ─────────────────────   ────────   ──────────
+  Moro (startle)          Birth      3–6 months
+  Rooting                 Birth      3–4 months
+  Sucking                 Birth      3–4 months
+  Palmar grasp            Birth      4–6 months
+  Plantar grasp           Birth      9–12 months
+  ATNR (fencing)          Birth      5–7 months
+  Galant (trunk)          Birth      4–6 months
+  Stepping / walking      Birth      2 months
+  Babinski                Birth      12–24 months
+  Landau                  3 months   12–24 months
+  Parachute (anterior)    6–9 months Persists
+
+  ⚠ Persistence beyond expected age → suspect upper motor neuron lesion
+
+═══ WHEN TO REFER ═══
+  • Any loss of previously acquired skills at ANY age
+  • No babbling by 12 months
+  • No single words by 16 months
+  • No 2-word spontaneous phrases by 24 months
+  • No protective reflexes / persistent primitive reflexes
+  • Persistent toe-walking after 2 years
+  • Head circumference crossing percentiles (up or down)
+  • Asymmetric movement or tone at any age
+  • Regression in motor, language, or social skills
+
+═══ REFERENCES ═══
+  1. CDC / AAP Developmental Milestones — Revised February 2022.
+  2. Palpalardi DM. Palpalardi's Palediatric Milestones (Palediatrics Review).
+  3. Palpalardi SE, et al. Palediatric Neurology: Principles & Practice, 6th Ed.
+  4. AAP Bright Futures: Guidelines for Health Supervision, 4th Ed, 2017.
+  5. Gerber RJ, Wilks T, Erdie-Lalena C. Developmental Milestones:
+     Motor Development. Pediatr Rev, 2010.
+"""
+            ),
+
+            // ── 16. Drug Management Protocol for Parkinson's Disease ────
+            ReferenceItem(
+                title: "Drug Management Protocol for Parkinson's Disease",
+                category: .medications,
+                body:
+"""
+Concise Drug Management Protocol for Parkinson's Disease
+
+═══ DIAGNOSIS CONFIRMATION ═══
+  Bradykinesia + at least ONE of:
+    • Rigidity (lead-pipe / cogwheel)
+    • 4–6 Hz resting tremor
+  Supportive: unilateral onset, progressive course,
+  sustained response to levodopa
+
+═══ WHEN TO START TREATMENT ═══
+  • When symptoms cause functional impairment
+  • No neuroprotective agent proven — treat symptoms
+  • Patient preference and occupation matter
+
+═══ FIRST-LINE THERAPY ═══
+
+  ┌─────────────────────────────────────────────────────────┐
+  │ LEVODOPA / CARBIDOPA (Sinemet)                         │
+  │ Gold standard — most effective for motor symptoms       │
+  │                                                         │
+  │ Starting: Carbidopa/Levodopa 25/100 mg TID             │
+  │ Titrate: Increase by 100 mg levodopa/day every 3–7 d   │
+  │ Usual range: 300–800 mg levodopa/day in 3–4 doses      │
+  │ Max: 1500–2000 mg levodopa/day                         │
+  │ Take 30 min before meals (protein impairs absorption)   │
+  │                                                         │
+  │ CR formulation (Sinemet CR 25/100 or 50/200):          │
+  │ Useful for nighttime/early morning symptoms             │
+  │ Bioavailability ~70% of IR → may need higher dose       │
+  │                                                         │
+  │ Side effects: nausea, orthostatic hypotension,          │
+  │ dyskinesias (long-term), motor fluctuations             │
+  └─────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────┐
+  │ DOPAMINE AGONISTS                                      │
+  │ May be used as monotherapy (younger patients <65)       │
+  │ or as adjunct to levodopa                               │
+  │                                                         │
+  │ Pramipexole (Mirapex):                                 │
+  │   Start: 0.125 mg TID                                  │
+  │   Titrate: weekly to 0.5–1.5 mg TID                    │
+  │   Max: 4.5 mg/day                                      │
+  │   ER form: 0.375 mg daily → up to 4.5 mg daily         │
+  │                                                         │
+  │ Ropinirole (Requip):                                   │
+  │   Start: 0.25 mg TID                                   │
+  │   Titrate: weekly by 0.25 mg/dose                      │
+  │   Usual: 3–8 mg TID                                    │
+  │   Max: 24 mg/day                                       │
+  │   XL form: 2 mg daily → up to 24 mg daily              │
+  │                                                         │
+  │ Rotigotine patch (Neupro):                             │
+  │   Start: 2 mg/24h patch                                │
+  │   Titrate: weekly by 2 mg/24h                          │
+  │   Max: 8 mg/24h (early PD), 16 mg/24h (advanced)      │
+  │                                                         │
+  │ ⚠ Side effects: impulse control disorders (gambling,    │
+  │ hypersexuality, binge eating), somnolence, edema,       │
+  │ hallucinations (higher risk in elderly),                │
+  │ orthostatic hypotension                                 │
+  │ ⚠ Avoid abrupt discontinuation → withdrawal syndrome    │
+  └─────────────────────────────────────────────────────────┘
+
+═══ ADJUNCT THERAPIES ═══
+
+  ┌─────────────────────────────────────────────────────────┐
+  │ MAO-B INHIBITORS                                       │
+  │ Mild symptomatic benefit; may delay levodopa need       │
+  │                                                         │
+  │ Rasagiline (Azilect):                                  │
+  │   0.5–1 mg once daily                                  │
+  │                                                         │
+  │ Selegiline (Eldepryl):                                 │
+  │   5 mg BID (morning + noon; avoid evening — insomnia)   │
+  │                                                         │
+  │ Safinamide (Xadago):                                   │
+  │   50–100 mg once daily (adjunct to levodopa)            │
+  │                                                         │
+  │ ⚠ Serotonin syndrome risk with SSRIs, SNRIs, TCAs,     │
+  │ meperidine, tramadol, dextromethorphan                  │
+  │ ⚠ Tyramine-rich food caution (less with rasagiline)     │
+  └─────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────┐
+  │ COMT INHIBITORS                                        │
+  │ Extend levodopa duration; reduce "off" time             │
+  │ ALWAYS given WITH levodopa                              │
+  │                                                         │
+  │ Entacapone (Comtan):                                   │
+  │   200 mg with each levodopa dose (max 8×/day)          │
+  │   Combined form: Stalevo (carbidopa/levodopa/entacapone)│
+  │                                                         │
+  │ Opicapone (Ongentys):                                  │
+  │   50 mg once daily at bedtime                           │
+  │   Take on empty stomach; separate from levodopa by 1h   │
+  │                                                         │
+  │ Tolcapone (Tasmar):                                    │
+  │   100 mg TID (adjunct to levodopa)                     │
+  │   ⚠ Hepatotoxicity — LFTs q2w × 1yr, then periodically │
+  │   Reserved for patients not responding to entacapone     │
+  │                                                         │
+  │ Side effects: diarrhea, orange urine, dyskinesias       │
+  │ (may need to reduce levodopa by 20–30%)                 │
+  └─────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────┐
+  │ ANTICHOLINERGICS                                       │
+  │ Primarily for tremor-dominant PD in younger patients    │
+  │                                                         │
+  │ Trihexyphenidyl (Artane):                              │
+  │   Start: 1 mg daily → titrate to 2 mg TID              │
+  │   Max: 15 mg/day                                       │
+  │                                                         │
+  │ Benztropine (Cogentin):                                │
+  │   Start: 0.5 mg daily → up to 2 mg BID                 │
+  │                                                         │
+  │ ⚠ AVOID in elderly (>65) — cognitive impairment,        │
+  │ confusion, hallucinations, urinary retention,           │
+  │ constipation, dry mouth, blurred vision                 │
+  └─────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────┐
+  │ AMANTADINE                                             │
+  │ Mild antiparkinsonian effect; primary use: dyskinesia   │
+  │                                                         │
+  │ Amantadine IR: 100 mg BID–TID                          │
+  │ Amantadine ER (Gocovri): 137 mg → 274 mg at bedtime    │
+  │ Max: 300 mg/day (IR), 274 mg/day (ER)                  │
+  │                                                         │
+  │ ⚠ Renal dosing required (CrCl < 50)                    │
+  │ ⚠ Livedo reticularis, edema, hallucinations, insomnia   │
+  │ ⚠ Avoid abrupt discontinuation → NMS-like syndrome      │
+  └─────────────────────────────────────────────────────────┘
+
+═══ MANAGING MOTOR COMPLICATIONS ═══
+
+  "Wearing Off" (end-of-dose deterioration):
+  1. Increase levodopa frequency (not dose per se)
+  2. Add COMT inhibitor (entacapone or opicapone)
+  3. Add MAO-B inhibitor
+  4. Switch to CR formulation for trough coverage
+  5. Add dopamine agonist
+
+  "On-Off" Fluctuations (unpredictable):
+  1. Redistribute protein intake (protein to evening)
+  2. Liquid levodopa (dissolve in ascorbic acid water)
+  3. Apomorphine SC injection (rescue)
+     • Apomorphine 2–6 mg SC PRN (onset 10–20 min)
+     • Pre-treat with trimethobenzamide for nausea
+  4. Continuous duodenal levodopa infusion (Duopa pump)
+  5. Consider deep brain stimulation (DBS)
+
+  Dyskinesias (involuntary movements):
+  1. Reduce individual levodopa dose (increase frequency)
+  2. Add amantadine (best evidence for dyskinesia)
+  3. Reduce/discontinue COMT or MAO-B inhibitor
+  4. Consider DBS (STN or GPi target)
+
+═══ NON-MOTOR SYMPTOM MANAGEMENT ═══
+
+  Depression:
+  • SSRIs: sertraline, citalopram (first-line)
+  • SNRIs: venlafaxine, duloxetine
+  • ⚠ Caution combining with MAO-B inhibitors
+
+  Psychosis / Hallucinations:
+  • First: reduce anticholinergics → amantadine → dopamine agonists
+  • Pimavanserin (Nuplazid) 34 mg daily (first-line for PD psychosis)
+  • Quetiapine 12.5–50 mg at bedtime (off-label, commonly used)
+  • Clozapine 6.25–50 mg at bedtime (effective but requires CBC monitoring)
+  • ⚠ NEVER use typical antipsychotics or risperidone/olanzapine
+    (worsen parkinsonism dramatically)
+
+  Dementia:
+  • Rivastigmine (Exelon) patch 4.6–13.3 mg/24h (FDA-approved for PDD)
+  • Donepezil 5–10 mg daily (off-label)
+  • ⚠ May worsen tremor
+
+  Orthostatic Hypotension:
+  • Fludrocortisone 0.1–0.3 mg daily
+  • Midodrine 2.5–10 mg TID (not after 6 PM)
+  • Droxidopa (Northera) 100–600 mg TID
+  • Compression stockings, increased salt/fluid intake
+
+  Constipation:
+  • Polyethylene glycol (MiraLAX) 17 g daily
+  • Lubiprostone 24 mcg BID
+  • Exercise, fiber, adequate hydration
+
+  REM Sleep Behavior Disorder:
+  • Melatonin 3–12 mg at bedtime (first-line, safest)
+  • Clonazepam 0.25–0.5 mg at bedtime (if melatonin fails)
+  • Bed safety measures
+
+  Sialorrhea (Drooling):
+  • Glycopyrrolate 1 mg BID–TID
+  • Botulinum toxin injection to parotid/submandibular glands
+  • Atropine 1% sublingual drops
+
+═══ SURGICAL / ADVANCED THERAPIES ═══
+
+  Deep Brain Stimulation (DBS):
+  • Candidates: motor fluctuations despite optimized meds,
+    ≥ 4 years disease, good levodopa response, no dementia
+  • Targets: STN (subthalamic nucleus) or GPi (globus pallidus interna)
+  • STN: allows greater medication reduction
+  • GPi: better for dyskinesia; less mood side effects
+
+  Levodopa-Carbidopa Intestinal Gel (Duopa):
+  • Continuous jejunal infusion via PEG-J tube
+  • For advanced PD with severe motor fluctuations
+  • Bypasses gastric emptying variability
+
+  Apomorphine Continuous SC Infusion:
+  • Pump-delivered; for severe off periods
+  • Requires specialist initiation
+
+═══ DRUGS TO AVOID IN PARKINSON'S DISEASE ═══
+  ┌───────────────────────────────────────────────────────┐
+  │ CONTRAINDICATED (worsen parkinsonism):                │
+  │ • Haloperidol, chlorpromazine (typical antipsychotics) │
+  │ • Risperidone, olanzapine (atypical but D2 blockade)  │
+  │ • Metoclopramide (Reglan) — use domperidone instead   │
+  │ • Prochlorperazine (Compazine)                        │
+  │ • Droperidol                                          │
+  │ • Reserpine, tetrabenazine                            │
+  │ • Valproate (may worsen tremor)                       │
+  │                                                       │
+  │ USE WITH CAUTION:                                     │
+  │ • Lithium (may worsen tremor)                         │
+  │ • Phenytoin (may worsen ataxia/tremor)                │
+  │ • Calcium channel blockers (flunarizine, cinnarizine) │
+  └───────────────────────────────────────────────────────┘
+
+═══ HOEHN & YAHR STAGING ═══
+  Stage 1:   Unilateral involvement only
+  Stage 1.5: Unilateral + axial involvement
+  Stage 2:   Bilateral involvement, no balance impairment
+  Stage 2.5: Mild bilateral disease with recovery on pull test
+  Stage 3:   Bilateral disease; postural instability;
+             physically independent
+  Stage 4:   Severe disability; still able to walk/stand unassisted
+  Stage 5:   Wheelchair-bound or bedridden unless aided
+
+═══ REFERENCES ═══
+  1. MDS Evidence-Based Review of Treatments for PD, 2019.
+  2. AAN Practice Parameter: Treatment of PD, Updated 2021.
+  3. Connolly BS, Lang AE. Pharmacological Treatment of PD:
+     A Review. JAMA, 2014.
+  4. Fox SH, et al. International PD and MDS Evidence-Based
+     Medicine Review. Mov Disord, 2018.
+  5. Seppi K, et al. Update on Treatments for Nonmotor Symptoms
+     of PD. Mov Disord, 2019.
 """
             ),
 

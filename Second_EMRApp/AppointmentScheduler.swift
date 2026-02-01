@@ -25,31 +25,60 @@ struct Appointment: Identifiable, Codable, Hashable {
 @MainActor
 final class AppointmentStore: ObservableObject {
     @Published var appointments: [Appointment] = []
-    
-    private let appointmentsKey = "appointments_data" // Standardized key
-    
-    init() { load() }
-    
+
+    private var fileURL: URL {
+        iCloudSyncManager.shared.url(for: "appointments.json")
+    }
+
+    init() {
+        load()
+        iCloudSyncManager.shared.registerForChanges(filename: "appointments.json") { [weak self] in
+            Task { @MainActor in self?.load() }
+        }
+    }
+
     func add(_ appointment: Appointment) {
         appointments.append(appointment)
         save()
     }
-    
+
     func delete(id: UUID) {
         appointments.removeAll(where: { $0.id == id })
         save()
     }
-    
+
+    func replaceAll(with newAppointments: [Appointment]) {
+        appointments = newAppointments
+        save()
+    }
+
     private func save() {
-        if let data = try? JSONEncoder().encode(appointments) {
-            UserDefaults.standard.set(data, forKey: appointmentsKey)
+        do {
+            let data = try JSONEncoder().encode(appointments)
+            try data.write(to: fileURL, options: [.atomic])
+        } catch {
+            print("Failed to save appointments: \(error)")
         }
     }
-    
+
     private func load() {
-        if let data = UserDefaults.standard.data(forKey: appointmentsKey),
-           let decoded = try? JSONDecoder().decode([Appointment].self, from: data) {
-            appointments = decoded
+        // Migrate from UserDefaults if file doesn't exist yet
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            if let data = UserDefaults.standard.data(forKey: "appointments_data"),
+               let decoded = try? JSONDecoder().decode([Appointment].self, from: data) {
+                appointments = decoded
+                save() // Write to file
+                UserDefaults.standard.removeObject(forKey: "appointments_data")
+                return
+            }
+        }
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: fileURL)
+            appointments = try JSONDecoder().decode([Appointment].self, from: data)
+        } catch {
+            print("Failed to load appointments: \(error)")
         }
     }
 }

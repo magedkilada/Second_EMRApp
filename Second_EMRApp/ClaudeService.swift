@@ -83,6 +83,72 @@ final class ClaudeService {
 
         return text.isEmpty ? "No response." : text
     }
+
+    // MARK: - Vision (image analysis)
+
+    func generateWithImages(
+        system: String,
+        userMessage: String,
+        images: [(data: Data, mediaType: String)],
+        maxTokens: Int = 4096,
+        temperature: Double = 0.3
+    ) async throws -> String {
+
+        let key = ClaudeConfig.apiKey
+        guard !key.isEmpty else {
+            throw NSError(domain: "Claude", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Missing Anthropic API key. Go to Settings to configure."
+            ])
+        }
+
+        var req = URLRequest(url: ClaudeConfig.endpoint)
+        req.httpMethod = "POST"
+        req.setValue(key, forHTTPHeaderField: "x-api-key")
+        req.setValue(ClaudeConfig.apiVersion, forHTTPHeaderField: "anthropic-version")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Build content array: images first, then text prompt
+        var contentBlocks: [[String: Any]] = []
+        for img in images {
+            contentBlocks.append([
+                "type": "image",
+                "source": [
+                    "type": "base64",
+                    "media_type": img.mediaType,
+                    "data": img.data.base64EncodedString()
+                ] as [String: Any]
+            ])
+        }
+        contentBlocks.append(["type": "text", "text": userMessage])
+
+        let body: [String: Any] = [
+            "model": ClaudeConfig.model,
+            "max_tokens": maxTokens,
+            "temperature": temperature,
+            "system": system,
+            "messages": [
+                ["role": "user", "content": contentBlocks]
+            ]
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let raw = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(domain: "Claude", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: "Claude API error: \(raw)"
+            ])
+        }
+
+        let decoded = try JSONDecoder().decode(ClaudeResponse.self, from: data)
+        let text = decoded.content
+            .compactMap { $0.type == "text" ? $0.text : nil }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return text.isEmpty ? "No response." : text
+    }
 }
 
 // MARK: - Response Models

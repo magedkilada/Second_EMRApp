@@ -55,6 +55,9 @@ struct Second_EMRAppApp: App {
                     // This allows the store to trigger auto-backups during data saves
                     store.backupCenter = backupCenter
                     store.referencesStore = referencesStore
+
+                    // 4. Start iCloud sync monitoring
+                    iCloudSyncManager.shared.startMonitoring()
                 }
         }
     }
