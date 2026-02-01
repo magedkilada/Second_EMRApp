@@ -269,7 +269,7 @@ struct RecordsWorkspaceView: View {
             .background(Color.orange.opacity(0.9))
             .clipShape(RoundedRectangle(cornerRadius: isCompact ? 10 : 14))
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
     }
 
@@ -768,43 +768,66 @@ private struct AttachmentPreviewPane: View {
 
     @ViewBuilder
     private var attachmentActionButtons: some View {
-        #if os(iOS)
-        Button {
-            showPreview = true
-        } label: {
-            Label("Preview", systemImage: "eye")
-        }
-        .buttonStyle(.borderedProminent)
-        #endif
+        Group {
+            #if os(iOS)
+            Button { showPreview = true } label: {
+                Label("Preview", systemImage: "eye")
+                    .labelStyle(.iconOnly)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
 
-        Button {
-            showAIAnalysis = true
-        } label: {
-            Label("AI Analyze", systemImage: "brain.head.profile")
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(.purple)
+            Button { showAIAnalysis = true } label: {
+                Label("AI Analyze", systemImage: "brain.head.profile")
+                    .labelStyle(.iconOnly)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.purple)
 
-        Button {
-            shareAttachment()
-        } label: {
-            Label("Share", systemImage: "square.and.arrow.up")
-        }
-        .buttonStyle(.bordered)
+            Button { shareAttachment() } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+                    .labelStyle(.iconOnly)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
 
-        Button {
-            printAttachment()
-        } label: {
-            Label("Print", systemImage: "printer")
-        }
-        .buttonStyle(.bordered)
+            Button { printAttachment() } label: {
+                Label("Print", systemImage: "printer")
+                    .labelStyle(.iconOnly)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
 
-        Button(role: .destructive) {
-            showDeleteConfirm = true
-        } label: {
-            Label("Delete", systemImage: "trash")
+            Button(role: .destructive) { showDeleteConfirm = true } label: {
+                Label("Delete", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            #else
+            Button { showAIAnalysis = true } label: {
+                Label("AI Analyze", systemImage: "brain.head.profile")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.purple)
+
+            Button { shareAttachment() } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(.bordered)
+
+            Button { printAttachment() } label: {
+                Label("Print", systemImage: "printer")
+            }
+            .buttonStyle(.bordered)
+
+            Button(role: .destructive) { showDeleteConfirm = true } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .buttonStyle(.bordered)
+            #endif
         }
-        .buttonStyle(.bordered)
     }
 
     private func shareAttachment() {
