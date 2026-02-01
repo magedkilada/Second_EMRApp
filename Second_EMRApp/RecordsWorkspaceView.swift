@@ -860,11 +860,14 @@ private struct AttachmentAISheet: View {
                 HStack(spacing: 8) {
                     Text("Model:").font(.caption).foregroundStyle(.secondary)
                     Picker("Model", selection: $selectedModel) {
-                        ForEach(availableModels, id: \.self) { model in
-                            Text(model.rawValue).tag(model)
+                        Text("Claude").tag(AIModel.claude)
+                        Text("GPT-4o").tag(AIModel.gpt)
+                        if attachment.type == .eeg {
+                            Text("EEG Server").tag(AIModel.eegServer)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .id(attachment.type)
                 }
                 .padding(.horizontal)
                 .padding(.top)
