@@ -5,6 +5,7 @@ struct LeftSidebarView: View {
     @EnvironmentObject private var physicians: PhysiciansStore
     @EnvironmentObject private var backupCenter: BackupCenter
     @EnvironmentObject private var referencesStore: ReferencesStore
+    @EnvironmentObject private var appointmentStore: AppointmentStore
 
     @Binding var searchText: String
 
@@ -157,6 +158,7 @@ struct LeftSidebarView: View {
         .sheet(item: $showScheduleForPatient) { patient in
             ScheduleView()
                 .environmentObject(store)
+                .environmentObject(appointmentStore)
         }
         .alert("Soft Delete Physician?", isPresented: $showDeletePhysicianAlert) {
             Button("Delete", role: .destructive) {

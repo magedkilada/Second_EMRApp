@@ -3,7 +3,7 @@ import SwiftUI
 struct PatientSummaryDashboard: View {
     let patient: Patient
     @EnvironmentObject private var store: EMRStore
-    @StateObject private var appointmentStore = AppointmentStore()
+    @EnvironmentObject private var appointmentStore: AppointmentStore
     @State private var showEditDemographics = false
     @State private var workingVitals: SmartVitalsEntry?
     @State private var scheduleDate: Date = Date()

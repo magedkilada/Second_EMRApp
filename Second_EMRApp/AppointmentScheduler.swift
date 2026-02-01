@@ -55,7 +55,7 @@ final class AppointmentStore: ObservableObject {
 }
 
 struct ScheduleView: View {
-    @StateObject private var appointmentStore = AppointmentStore()
+    @EnvironmentObject private var appointmentStore: AppointmentStore
     @EnvironmentObject private var emrStore: EMRStore
     @Environment(\.dismiss) private var dismiss
     

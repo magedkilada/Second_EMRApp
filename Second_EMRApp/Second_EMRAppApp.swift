@@ -15,6 +15,7 @@ struct Second_EMRAppApp: App {
     @StateObject private var growthStore = GrowthStore.shared
     @StateObject private var backupCenter = BackupCenter()
     @StateObject private var referencesStore = ReferencesStore()
+    @StateObject private var appointmentStore = AppointmentStore()
 
     init() {
         print("🚀 APP LAUNCHED")
@@ -35,6 +36,7 @@ struct Second_EMRAppApp: App {
                 .environmentObject(growthStore)
                 .environmentObject(backupCenter)
                 .environmentObject(referencesStore)
+                .environmentObject(appointmentStore)
                 .task {
                     // 1. Load WHO Growth Data
                     growthStore.loadBundleJSON(named: [
