@@ -172,6 +172,85 @@ final class EMRStore: ObservableObject {
         saveAttachments()
     }
 
+    // MARK: - Merge (cross-device deduplication)
+
+    /// Merge incoming patients, keeping the newer `updatedAt` for duplicates.
+    func mergePatients(with incoming: [Patient]) -> (added: Int, updated: Int) {
+        var existing = Dictionary(uniqueKeysWithValues: patients.map { ($0.id, $0) })
+        var added = 0, updated = 0
+
+        for item in incoming {
+            if let current = existing[item.id] {
+                if item.updatedAt > current.updatedAt {
+                    existing[item.id] = item
+                    updated += 1
+                }
+            } else {
+                existing[item.id] = item
+                added += 1
+            }
+        }
+
+        patients = Array(existing.values).sorted { $0.createdAt > $1.createdAt }
+        if selectedPatientID == nil {
+            selectedPatientID = patients.first(where: { !$0.isDeleted })?.id
+        }
+        lastModified = Date()
+        savePatients()
+        return (added, updated)
+    }
+
+    /// Merge incoming notes, keeping the newer `updatedAt` for duplicates.
+    func mergeNotes(with incoming: [RecordNote]) -> (added: Int, updated: Int) {
+        var existing = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
+        var added = 0, updated = 0
+
+        for item in incoming {
+            if let current = existing[item.id] {
+                if item.updatedAt > current.updatedAt {
+                    existing[item.id] = item
+                    updated += 1
+                }
+            } else {
+                existing[item.id] = item
+                added += 1
+            }
+        }
+
+        notes = Array(existing.values).sorted { $0.createdAt > $1.createdAt }
+        lastModified = Date()
+        saveNotes()
+        return (added, updated)
+    }
+
+    /// Merge incoming attachments by UUID (add if new).
+    func mergeAttachments(with incoming: [Attachment]) -> Int {
+        let existingIDs = Set(attachments.map { $0.id })
+        let newItems = incoming.filter { !existingIDs.contains($0.id) }
+
+        if !newItems.isEmpty {
+            attachments.append(contentsOf: newItems)
+            attachments.sort { $0.createdAt > $1.createdAt }
+            lastModified = Date()
+            saveAttachments()
+        }
+        return newItems.count
+    }
+
+    /// Merge incoming vitals by UUID (add if new).
+    func mergeVitals(with incoming: [SmartVitalsEntry]) -> Int {
+        let existingIDs = Set(vitals.map { $0.id })
+        let newItems = incoming.filter { !existingIDs.contains($0.id) }
+
+        if !newItems.isEmpty {
+            vitals.append(contentsOf: newItems)
+            vitals.sort { $0.recordedAt > $1.recordedAt }
+            lastModified = Date()
+            saveVitals()
+        }
+        return newItems.count
+    }
+
     // MARK: - Persistence
 
     func forcePersistAll() {

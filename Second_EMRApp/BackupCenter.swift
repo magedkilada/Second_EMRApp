@@ -102,6 +102,69 @@ final class BackupCenter: ObservableObject {
         }
     }
 
+    // MARK: - Merge from File (cross-device deduplication)
+
+    struct MergeResult {
+        var patientsAdded: Int = 0
+        var patientsUpdated: Int = 0
+        var notesAdded: Int = 0
+        var notesUpdated: Int = 0
+        var attachmentsAdded: Int = 0
+        var vitalsAdded: Int = 0
+        var referencesAdded: Int = 0
+
+        var summary: String {
+            var parts: [String] = []
+            if patientsAdded > 0 { parts.append("\(patientsAdded) new patient\(patientsAdded == 1 ? "" : "s")") }
+            if patientsUpdated > 0 { parts.append("\(patientsUpdated) patient\(patientsUpdated == 1 ? "" : "s") updated") }
+            if notesAdded > 0 { parts.append("\(notesAdded) new note\(notesAdded == 1 ? "" : "s")") }
+            if notesUpdated > 0 { parts.append("\(notesUpdated) note\(notesUpdated == 1 ? "" : "s") updated") }
+            if attachmentsAdded > 0 { parts.append("\(attachmentsAdded) new attachment\(attachmentsAdded == 1 ? "" : "s")") }
+            if vitalsAdded > 0 { parts.append("\(vitalsAdded) new vitals entr\(vitalsAdded == 1 ? "y" : "ies")") }
+            if referencesAdded > 0 { parts.append("\(referencesAdded) new reference\(referencesAdded == 1 ? "" : "s")") }
+
+            if parts.isEmpty { return "No new data found — everything was already up to date." }
+            return parts.joined(separator: ", ") + "."
+        }
+    }
+
+    func mergeFromFile(_ fileURL: URL, password: String, store: EMRStore, referencesStore: ReferencesStore) -> MergeResult? {
+        guard !isProcessing else { return nil }
+        guard !password.isEmpty else { lastError = "Password is required."; return nil }
+        isProcessing = true
+        lastError = ""
+
+        defer { isProcessing = false }
+
+        do {
+            let accessing = fileURL.startAccessingSecurityScopedResource()
+            defer { if accessing { fileURL.stopAccessingSecurityScopedResource() } }
+
+            let encryptedData = try Data(contentsOf: fileURL)
+            let decryptedData = try BackupCrypto.decrypt(encryptedData, password: password)
+            let payload = try JSONDecoder().decode(BackupPayload.self, from: decryptedData)
+
+            var result = MergeResult()
+
+            let patientMerge = store.mergePatients(with: payload.patients)
+            result.patientsAdded = patientMerge.added
+            result.patientsUpdated = patientMerge.updated
+
+            let noteMerge = store.mergeNotes(with: payload.notes)
+            result.notesAdded = noteMerge.added
+            result.notesUpdated = noteMerge.updated
+
+            result.attachmentsAdded = store.mergeAttachments(with: payload.attachments)
+            result.vitalsAdded = store.mergeVitals(with: payload.vitals)
+            result.referencesAdded = referencesStore.mergeItems(with: payload.references)
+
+            return result
+        } catch {
+            lastError = "Merge failed: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
     // MARK: - List Available Backups
 
     func listBackups() -> [BackupFileInfo] {

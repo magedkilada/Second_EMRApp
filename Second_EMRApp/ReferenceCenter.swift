@@ -170,6 +170,18 @@ public final class ReferencesStore: ObservableObject {
         saveToDisk()
     }
 
+    /// Merge incoming references by UUID (add if new).
+    public func mergeItems(with incoming: [ReferenceItem]) -> Int {
+        let existingIDs = Set(items.map { $0.id })
+        let newItems = incoming.filter { !existingIDs.contains($0.id) }
+
+        if !newItems.isEmpty {
+            items.append(contentsOf: newItems)
+            saveToDisk()
+        }
+        return newItems.count
+    }
+
     // MARK: - Persistence
 
     private func saveToDisk() {

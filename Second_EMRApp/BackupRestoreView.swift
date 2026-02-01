@@ -22,6 +22,14 @@ struct BackupRestoreView: View {
     @State private var showRestoreSuccess = false
     @State private var showBackupSuccess = false
 
+    // Merge
+    @State private var showMergeFilePicker = false
+    @State private var mergePassword: String = ""
+    @State private var showMergePasswordPrompt = false
+    @State private var pendingMergeURL: URL? = nil
+    @State private var showMergeSuccess = false
+    @State private var mergeResultSummary: String = ""
+
     @State private var backupFiles: [BackupFileInfo] = []
     @State private var showDeleteConfirm = false
     @State private var pendingDeleteURL: URL? = nil
@@ -33,6 +41,7 @@ struct BackupRestoreView: View {
                 passwordSection
                 manualBackupSection
                 autoBackupSection
+                mergeSection
                 restoreSection
                 existingBackupsSection
             }
@@ -105,6 +114,34 @@ struct BackupRestoreView: View {
                     shareURL = nil
                 }
                 #endif
+            }
+            .fileImporter(
+                isPresented: $showMergeFilePicker,
+                allowedContentTypes: [UTType(filenameExtension: "emrbackup") ?? .data],
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let url = urls.first {
+                    pendingMergeURL = url
+                    mergePassword = ""
+                    showMergePasswordPrompt = true
+                }
+            }
+            .alert("Enter Backup Password", isPresented: $showMergePasswordPrompt) {
+                SecureField("Password", text: $mergePassword)
+                Button("Merge") {
+                    performMerge()
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingMergeURL = nil
+                    mergePassword = ""
+                }
+            } message: {
+                Text("Enter the password used when this backup was created. Data will be merged — nothing will be deleted.")
+            }
+            .alert("Merge Complete", isPresented: $showMergeSuccess) {
+                Button("OK") {}
+            } message: {
+                Text(mergeResultSummary)
             }
             .alert("Delete Backup?", isPresented: $showDeleteConfirm) {
                 Button("Delete", role: .destructive) {
@@ -240,6 +277,28 @@ struct BackupRestoreView: View {
         }
     }
 
+    private var mergeSection: some View {
+        Section {
+            Button {
+                showMergeFilePicker = true
+            } label: {
+                HStack {
+                    Image(systemName: "arrow.triangle.merge")
+                    Text("Merge from Backup...")
+                    Spacer()
+                    if backupCenter.isProcessing {
+                        ProgressView()
+                    }
+                }
+            }
+            .disabled(backupCenter.isProcessing)
+        } header: {
+            Text("Merge (Cross-Device Sync)")
+        } footer: {
+            Text("Import a backup from another device. New records are added, duplicates are updated to the newest version. Nothing is deleted.")
+        }
+    }
+
     private var restoreSection: some View {
         Section {
             Button {
@@ -361,6 +420,16 @@ struct BackupRestoreView: View {
             showBackupSuccess = true
             backupFiles = backupCenter.listBackups()
         }
+    }
+
+    private func performMerge() {
+        guard let url = pendingMergeURL else { return }
+        if let result = backupCenter.mergeFromFile(url, password: mergePassword, store: store, referencesStore: referencesStore) {
+            mergeResultSummary = result.summary
+            showMergeSuccess = true
+        }
+        pendingMergeURL = nil
+        mergePassword = ""
     }
 
     private func performRestore() {
