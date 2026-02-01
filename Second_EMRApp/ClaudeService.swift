@@ -6,12 +6,24 @@ enum ClaudeConfig {
     static let apiVersion = "2023-06-01"
 
     static var apiKey: String {
-        // First try Info.plist, then UserDefaults
-        if let key = Bundle.main.object(forInfoDictionaryKey: "ANTHROPIC_API_KEY") as? String,
-           !key.isEmpty, !key.contains("$(") {
+        // UserDefaults first (in-app entry wins), then Info.plist fallback
+        if let key = UserDefaults.standard.string(forKey: "ANTHROPIC_API_KEY"),
+           Self.isValidKey(key) {
             return key
         }
-        return UserDefaults.standard.string(forKey: "ANTHROPIC_API_KEY") ?? ""
+        if let key = Bundle.main.object(forInfoDictionaryKey: "ANTHROPIC_API_KEY") as? String,
+           Self.isValidKey(key) {
+            return key
+        }
+        return ""
+    }
+
+    private static func isValidKey(_ key: String) -> Bool {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.contains("$(") { return false }
+        if trimmed.uppercased().hasPrefix("YOUR_") { return false }
+        return true
     }
 
     static var isConfigured: Bool {

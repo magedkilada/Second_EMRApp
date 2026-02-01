@@ -154,22 +154,17 @@ struct NoteEditorView: View {
                     .disabled(true)
             }
 
-            Menu {
+            compactBtn("Print", icon: "printer", color: .gray) {
+                printCurrentNote()
+            }
+            .contextMenu {
                 Button(action: printCurrentNote) {
                     Label("Print This Note", systemImage: "printer")
                 }
                 Button(action: { showBatchPrintMenu = true }) {
                     Label("Batch Print...", systemImage: "doc.on.doc")
                 }
-            } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "printer").font(.system(size: 14))
-                    Text("Print").font(.system(size: 9, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
             }
-            .buttonStyle(.bordered)
 
             compactBtn("Share", icon: "square.and.arrow.up", color: .gray) {
                 shareCurrentNote()
@@ -183,15 +178,9 @@ struct NoteEditorView: View {
                 showTranslate = true
             }
 
-            Button(role: .destructive) { showDeleteConfirm = true } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "trash").font(.system(size: 14))
-                    Text("Delete").font(.system(size: 9, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+            compactBtn("Delete", icon: "trash", color: .red) {
+                showDeleteConfirm = true
             }
-            .buttonStyle(.bordered)
             .disabled(note.isFinalized)
         }
     }
@@ -209,72 +198,123 @@ struct NoteEditorView: View {
         .tint(color)
     }
 
+
     // MARK: - Dictation
 
     #if os(iOS)
+    @State private var blinkOn = false
+
     private var dictationButton: some View {
-        Button {
-            dictation.toggleDictation { rawText in
-                smartInsertDictation(rawText)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                switch dictation.state {
-                case .idle:
-                    Image(systemName: "mic.fill").foregroundStyle(.red)
-                    Text("Dictate").font(.caption2)
-                case .recording:
-                    Image(systemName: "stop.circle.fill").foregroundStyle(.red)
-                    Text("Stop").font(.caption2).bold()
-                case .transcribing:
-                    ProgressView().controlSize(.mini)
-                    Text("...").font(.caption2)
+        HStack(spacing: 2) {
+            Button {
+                dictation.toggleDictation { rawText in
+                    smartInsertDictation(rawText)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    switch dictation.state {
+                    case .idle:
+                        Image(systemName: "mic.fill").foregroundStyle(.red)
+                        Text("Dictate").font(.caption2)
+                    case .recording:
+                        Circle()
+                            .fill(.red)
+                            .frame(width: 10, height: 10)
+                            .opacity(blinkOn ? 1.0 : 0.2)
+                            .onAppear {
+                                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                                    blinkOn = true
+                                }
+                            }
+                            .onDisappear { blinkOn = false }
+                        Text("Stop").font(.caption2).bold().foregroundStyle(.red)
+                    case .transcribing:
+                        ProgressView().controlSize(.mini)
+                        Text("...").font(.caption2)
+                    }
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(dictation.state == .recording ? Color.red.opacity(0.15) : Color.tertiarySystemGroupedBg)
-            .clipShape(Capsule())
+            .buttonStyle(.plain)
+            .disabled(note.isFinalized)
+
+            Menu {
+                ForEach(DictationEngine.allCases, id: \.self) { eng in
+                    Button {
+                        dictation.setEngine(eng)
+                    } label: {
+                        HStack {
+                            Text(eng.rawValue)
+                            if eng == dictation.engine {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(dictation.state != .idle)
         }
-        .buttonStyle(.plain)
-        .disabled(note.isFinalized)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(dictation.state == .recording ? Color.red.opacity(0.15) : Color.tertiarySystemGroupedBg)
+        .clipShape(Capsule())
+        .overlay(alignment: .bottomTrailing) {
+            if let err = dictation.lastError {
+                Text(err)
+                    .font(.caption2)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .padding(8)
+                    .background(Color.red.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .offset(y: 40)
+                    .frame(maxWidth: 280, alignment: .trailing)
+                    .onTapGesture { dictation.lastError = nil }
+            }
+        }
     }
 
     private func smartInsertDictation(_ rawText: String) {
         guard !rawText.isEmpty else { return }
 
-        // If Claude API is available, use it to organize dictation into template sections
+        // Always insert at cursor first so text is never lost
+        insertAtCurrentCursor(rawText)
+
+        // Then optionally organize with Claude
         if ClaudeConfig.isConfigured {
             Task {
                 await smartOrganizeDictation(rawText)
             }
-        } else {
-            // No AI: insert at cursor position
-            insertAtCurrentCursor(rawText)
         }
     }
 
     private func smartOrganizeDictation(_ rawText: String) async {
+        let currentBody = note.body
         let templateSections = note.type.defaultBody
         let system = """
-        You are a medical scribe assistant. The physician has dictated text that needs to be \
-        inserted into the correct section of a clinical note template. \
+        You are a medical scribe assistant. The physician has dictated text that was inserted \
+        into a clinical note. Reorganize the note so the dictated content is in the correct \
+        template section(s). \
         The template sections are:\n\(templateSections)\n\n\
         Rules:\n\
-        - Match dictated content to the appropriate template section(s).\n\
-        - If the note already has content, merge the new dictation into the correct sections.\n\
-        - Preserve ALL existing note content.\n\
-        - Output the COMPLETE note body with dictation merged in.\n\
+        - Preserve ALL existing note content — do not remove anything.\n\
+        - Move dictated content to the appropriate section(s) if misplaced.\n\
+        - Output the COMPLETE note body.\n\
         - Do NOT add information not spoken by the physician.\n\
-        - If you cannot determine the section, append the dictation at the cursor position.
+        - Do NOT remove or shorten any existing content.\n\
+        - If you cannot determine the section, leave the text where it is.
         """
         let userMsg = """
-        Current note body:
-        \(note.body)
+        Current note body (with dictation already inserted):
+        \(currentBody)
 
-        New dictation to insert:
+        The newly dictated text was:
         \(rawText)
 
-        Return the updated note body with the dictation merged into the appropriate sections.
+        Return the reorganized note body with ALL content preserved.
         """
 
         do {
@@ -284,15 +324,16 @@ struct NoteEditorView: View {
                 maxTokens: 3000,
                 temperature: 0.1
             )
+            let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Only use Claude's result if it's at least as long as 60% of current body
+            // (safety check: Claude should never shrink the note)
+            guard !trimmed.isEmpty, trimmed.count >= currentBody.count * 6 / 10 else { return }
             await MainActor.run {
-                note.body = result
+                note.body = trimmed
                 onSave(note)
             }
         } catch {
-            // Fallback: insert at cursor
-            await MainActor.run {
-                insertAtCurrentCursor(rawText)
-            }
+            // Dictation is already inserted, nothing more to do
         }
     }
 

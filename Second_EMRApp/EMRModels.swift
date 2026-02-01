@@ -81,41 +81,34 @@ public enum RecordType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .hp:
             return """
-            CHIEF COMPLAINT:  
+            CHIEF COMPLAINT:
             HISTORY OF PRESENT ILLNESS:
 
-            PAST MEDICAL HISTORY:  
-            PAST SURGICAL HISTORY:  
-            MEDICATIONS:  
+            PAST MEDICAL HISTORY:
+            PAST SURGICAL HISTORY:
+            MEDICATIONS:
             ALLERGIES:
 
-            SOCIAL HISTORY:  
+            SOCIAL HISTORY:
             FAMILY HISTORY:
 
             REVIEW OF SYSTEMS:
 
             PHYSICAL EXAMINATION:
+            LABS / RADIOLOGY:
 
-            GENERAL:  
-            NEUROLOGIC:  
-            OTHER SYSTEMS:
-
-            ASSESSMENT:  
+            ASSESSMENT:
             PLAN:
             """
         case .soap:
             return """
-            SUBJECTIVE:  
-            OBJECTIVE:  
+            SUBJECTIVE:
+            OBJECTIVE:
             PHYSICAL EXAMINATION:
+            LABS / RADIOLOGY:
 
-            GENERAL:  
-            NEUROLOGIC:  
-            OTHER SYSTEMS:  
-            Labs / Imaging:
-
-            ASSESSMENT:  
-            1)  
+            ASSESSMENT:
+            1)
             2)
 
             PLAN:

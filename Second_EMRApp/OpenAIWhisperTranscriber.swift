@@ -9,7 +9,7 @@ struct OpenAIWhisperTranscriber {
 
         var errorDescription: String? {
             switch self {
-            case .missingAPIKey: return "Missing OPENAI_API_KEY in Info.plist."
+            case .missingAPIKey: return "OpenAI API key not set. Tap AI > key icon to configure."
             case .badResponse: return "Bad response from transcription service."
             case .server(let msg): return msg
             }
@@ -18,20 +18,15 @@ struct OpenAIWhisperTranscriber {
 
     private let model: String
 
-    init(model: String = "gpt-4o-mini-transcribe") {
+    init(model: String = "whisper-1") {
         self.model = model
     }
 
     func transcribe(fileURL: URL) async throws -> String {
 
-        // Same pattern as OpenAIService.swift
-        guard let raw = Bundle.main.object(forInfoDictionaryKey: OpenAIConfig.apiKeyInfoPlistKey) as? String else {
-            throw TranscriberError.missingAPIKey
-        }
-        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // If Info.plist still contains $(OPENAI_API_KEY) literally, this catches it.
-        guard !key.isEmpty, !key.contains("$(") else {
+        // Use centralized key from OpenAIConfig (checks UserDefaults first, then Info.plist)
+        let key = OpenAIConfig.apiKey
+        guard !key.isEmpty else {
             throw TranscriberError.missingAPIKey
         }
 

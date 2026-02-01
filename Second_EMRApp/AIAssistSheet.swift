@@ -22,14 +22,25 @@ struct AIAssistSheet: View {
         }
     }
 
+    enum AIModel: String, CaseIterable {
+        case claude = "Claude"
+        case gpt = "GPT-4o"
+
+        var icon: String {
+            switch self {
+            case .claude: return "brain.head.profile"
+            case .gpt: return "brain"
+            }
+        }
+    }
+
     @State private var mode: AIMode = .refine
+    @State private var selectedModel: AIModel = .claude
     @State private var userPrompt: String = ""
     @State private var aiResponse: String = ""
     @State private var isLoading = false
     @State private var errorMessage: String = ""
     @State private var showReplaceConfirm = false
-    @State private var showAPIKeyEntry = false
-    @State private var apiKeyInput: String = ""
 
     var body: some View {
         NavigationStack {
@@ -41,7 +52,21 @@ struct AIAssistSheet: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .padding()
+                .padding(.horizontal)
+                .padding(.top)
+
+                // Model picker
+                HStack(spacing: 8) {
+                    Text("Model:").font(.caption).foregroundStyle(.secondary)
+                    Picker("Model", selection: $selectedModel) {
+                        ForEach(AIModel.allCases, id: \.self) { model in
+                            Label(model.rawValue, systemImage: model.icon).tag(model)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 4)
 
                 Divider()
 
@@ -78,7 +103,7 @@ struct AIAssistSheet: View {
                                 } else {
                                     Image(systemName: "paperplane.fill")
                                 }
-                                Text(isLoading ? "Processing..." : "Send to AI")
+                                Text(isLoading ? "Processing..." : "Send to \(selectedModel.rawValue)")
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
@@ -92,11 +117,6 @@ struct AIAssistSheet: View {
                             HStack {
                                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
                                 Text(errorMessage).font(.caption).foregroundStyle(.red)
-                            }
-
-                            if !ClaudeConfig.isConfigured {
-                                Button("Set API Key") { showAPIKeyEntry = true }
-                                    .font(.caption)
                             }
                         }
 
@@ -176,17 +196,6 @@ struct AIAssistSheet: View {
             } message: {
                 Text("This will replace the entire note body with the AI-refined version. This cannot be undone.")
             }
-            .alert("Enter Anthropic API Key", isPresented: $showAPIKeyEntry) {
-                TextField("sk-ant-...", text: $apiKeyInput)
-                Button("Save") {
-                    UserDefaults.standard.set(apiKeyInput, forKey: "ANTHROPIC_API_KEY")
-                    apiKeyInput = ""
-                    errorMessage = ""
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Enter your Claude API key. It will be stored locally on this device.")
-            }
         }
     }
 
@@ -215,33 +224,50 @@ struct AIAssistSheet: View {
         errorMessage = ""
 
         do {
-            let result: String
+            let system: String
+            let input: String
+
             switch mode {
             case .refine:
-                let system = """
+                system = """
                 You are a medical documentation assistant. Refine and improve the following clinical note. \
                 Keep the same structure and medical content but improve clarity, grammar, and formatting. \
                 Do not add fictional information. Only output the refined note text, no preamble.
                 """
-                let input = userPrompt.isEmpty
+                input = userPrompt.isEmpty
                     ? "Please refine this clinical note:\n\n\(note.body)"
                     : "Please refine this clinical note with these instructions: \(userPrompt)\n\nNote:\n\(note.body)"
-                result = try await ClaudeService.shared.generate(system: system, userMessage: input, maxTokens: 3000)
 
             case .askNote:
-                let system = """
+                system = """
                 You are a medical documentation assistant. Answer questions about the provided clinical note. \
                 Be concise and accurate. If information is not in the note, say so.
                 """
-                let input = "Clinical note:\n\n\(note.body)\n\nQuestion: \(userPrompt)"
-                result = try await ClaudeService.shared.generate(system: system, userMessage: input)
+                input = "Clinical note:\n\n\(note.body)\n\nQuestion: \(userPrompt)"
 
             case .askAnything:
-                let system = """
+                system = """
                 You are a knowledgeable medical assistant. Provide accurate, evidence-based medical information. \
                 Always include a disclaimer that this is AI-generated and should not replace clinical judgment.
                 """
-                result = try await ClaudeService.shared.generate(system: system, userMessage: userPrompt)
+                input = userPrompt
+            }
+
+            let result: String
+            switch selectedModel {
+            case .claude:
+                result = try await ClaudeService.shared.generate(
+                    system: system,
+                    userMessage: input,
+                    maxTokens: 3000
+                )
+            case .gpt:
+                result = try await OpenAIService.shared.generate(
+                    instructions: system,
+                    input: input,
+                    maxOutputTokens: 3000,
+                    temperature: 0.2
+                )
             }
 
             await MainActor.run {
@@ -272,3 +298,4 @@ struct AIAssistSheet: View {
         onSave(note)
     }
 }
+

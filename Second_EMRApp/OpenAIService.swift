@@ -4,13 +4,12 @@ final class OpenAIService {
     static let shared = OpenAIService()
     private init() {}
 
-    // Reads the key from Info.plist (which you already confirmed prints correctly)
+    // Uses the centralized key from OpenAIConfig
     private var apiKey: String {
-        let raw = (Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String) ?? ""
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        OpenAIConfig.apiKey
     }
 
-    /// One-shot text generation (no tools, no streaming)
+    /// One-shot text generation via Chat Completions API
     func generate(
         instructions: String,
         input: String,
@@ -20,7 +19,7 @@ final class OpenAIService {
 
         guard !apiKey.isEmpty, !apiKey.contains("$(") else {
             throw NSError(domain: "OpenAI", code: -1, userInfo: [
-                NSLocalizedDescriptionKey: "Missing OPENAI_API_KEY in app Info settings."
+                NSLocalizedDescriptionKey: "Missing OPENAI_API_KEY. Tap the key icon to configure."
             ])
         }
 
@@ -29,15 +28,16 @@ final class OpenAIService {
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body = OARequest(
-            model: OpenAIConfig.model,
-            input: input,
-            instructions: instructions,
-            max_output_tokens: maxOutputTokens,
-            temperature: temperature,
-            store: false
-        )
-        req.httpBody = try JSONEncoder().encode(body)
+        let body: [String: Any] = [
+            "model": OpenAIConfig.model,
+            "max_tokens": maxOutputTokens,
+            "temperature": temperature,
+            "messages": [
+                ["role": "system", "content": instructions],
+                ["role": "user", "content": input]
+            ]
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, resp) = try await URLSession.shared.data(for: req)
 
@@ -48,55 +48,27 @@ final class OpenAIService {
             ])
         }
 
-        let decoded = try JSONDecoder().decode(OAResponse.self, from: data)
+        let decoded = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
 
-        if let out = decoded.output_text?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !out.isEmpty {
-            return out
-        }
-
-        if let out = decoded.extractTextBestEffort(), !out.isEmpty {
-            return out
+        if let text = decoded.choices.first?.message.content?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            return text
         }
 
         return "No response."
     }
 }
 
-// MARK: - Models
+// MARK: - Chat Completions Response Models
 
-private struct OARequest: Encodable {
-    let model: String
-    let input: String
-    let instructions: String
-    let max_output_tokens: Int
-    let temperature: Double
-    let store: Bool
-}
+private struct ChatCompletionResponse: Decodable {
+    let choices: [Choice]
 
-private struct OAResponse: Decodable {
-    let output_text: String?
-    let output: [OutputItem]?
-
-    struct OutputItem: Decodable {
-        let type: String?
-        let content: [ContentPart]?
-
-        struct ContentPart: Decodable {
-            let type: String?
-            let text: String?
-        }
+    struct Choice: Decodable {
+        let message: Message
     }
 
-    func extractTextBestEffort() -> String? {
-        guard let output else { return nil }
-        var chunks: [String] = []
-        for item in output {
-            for part in item.content ?? [] {
-                if let t = part.text, !t.isEmpty { chunks.append(t) }
-            }
-        }
-        let joined = chunks.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return joined.isEmpty ? nil : joined
+    struct Message: Decodable {
+        let content: String?
     }
 }

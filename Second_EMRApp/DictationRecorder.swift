@@ -4,6 +4,12 @@ import Combine
 
 #if os(iOS)
 import AVFoundation
+import Speech
+
+enum DictationEngine: String, CaseIterable {
+    case whisper = "Whisper"
+    case apple = "Apple / Claude"
+}
 
 @MainActor
 final class DictationRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
@@ -18,13 +24,18 @@ final class DictationRecorder: NSObject, ObservableObject, AVAudioRecorderDelega
 
     @Published var state: State = .idle
     @Published var lastError: String?
+    @Published var engine: DictationEngine = {
+        if let saved = UserDefaults.standard.string(forKey: "DictationEngine"),
+           let eng = DictationEngine(rawValue: saved) {
+            return eng
+        }
+        return .whisper
+    }()
 
     private var recorder: AVAudioRecorder?
     private var recordedURL: URL?
 
-    private let transcriber = OpenAIWhisperTranscriber(
-        model: "gpt-4o-mini-transcribe"
-    )
+    private let transcriber = OpenAIWhisperTranscriber(model: "whisper-1")
 
     // MARK: - Public API
 
@@ -43,6 +54,11 @@ final class DictationRecorder: NSObject, ObservableObject, AVAudioRecorderDelega
         }
     }
 
+    func setEngine(_ eng: DictationEngine) {
+        engine = eng
+        UserDefaults.standard.set(eng.rawValue, forKey: "DictationEngine")
+    }
+
     // MARK: - Permission
 
     private func startRecordingWithPermission() async {
@@ -58,6 +74,20 @@ final class DictationRecorder: NSObject, ObservableObject, AVAudioRecorderDelega
             lastError = "Microphone permission denied. Enable it in Settings."
             state = .idle
             return
+        }
+
+        // For Apple Speech, also request speech recognition permission
+        if engine == .apple {
+            let speechGranted = await withCheckedContinuation { cont in
+                SFSpeechRecognizer.requestAuthorization { status in
+                    cont.resume(returning: status == .authorized)
+                }
+            }
+            guard speechGranted else {
+                lastError = "Speech recognition permission denied. Enable it in Settings."
+                state = .idle
+                return
+            }
         }
 
         startRecording()
@@ -117,12 +147,48 @@ final class DictationRecorder: NSObject, ObservableObject, AVAudioRecorderDelega
 
         Task {
             do {
-                let text = try await transcriber.transcribe(fileURL: url)
-                onResult(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                let text: String
+                switch engine {
+                case .whisper:
+                    text = try await transcriber.transcribe(fileURL: url)
+                case .apple:
+                    text = try await appleTranscribe(fileURL: url)
+                }
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    lastError = "No speech detected. Try speaking louder or longer."
+                } else {
+                    onResult(trimmed)
+                }
                 state = .idle
             } catch {
                 lastError = "Transcribe failed: \(error.localizedDescription)"
                 state = .idle
+            }
+        }
+    }
+
+    // MARK: - Apple Speech Recognition
+
+    private func appleTranscribe(fileURL: URL) async throws -> String {
+        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
+            throw NSError(domain: "Speech", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Speech recognizer not available for this language."
+            ])
+        }
+
+        let request = SFSpeechURLRecognitionRequest(url: fileURL)
+        request.shouldReportPartialResults = false
+
+        return try await withCheckedThrowingContinuation { cont in
+            recognizer.recognitionTask(with: request) { result, error in
+                if let error = error {
+                    cont.resume(throwing: error)
+                    return
+                }
+                if let result = result, result.isFinal {
+                    cont.resume(returning: result.bestTranscription.formattedString)
+                }
             }
         }
     }

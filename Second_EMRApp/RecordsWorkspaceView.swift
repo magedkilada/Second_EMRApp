@@ -181,8 +181,11 @@ struct RecordsWorkspaceView: View {
                 Button("Special Tests (EEG etc.)") { pendingAttachmentCategory = .eeg; openPicker() }
                 Button("Cancel", role: .cancel) {}
             }
-            .onChange(of: selectedNoteID) { _, _ in
-                autoDeleteEmptyNote(selectedNoteID)
+            .onChange(of: selectedNoteID) { oldID, newID in
+                // Clean up the PREVIOUS note if it was left empty, not the new one
+                if let oldID, oldID != newID {
+                    autoDeleteEmptyNote(oldID)
+                }
             }
             .alert("Switch Note?", isPresented: $showSwitchNoteWarning) {
                 Button("Save & Switch") {
@@ -428,8 +431,13 @@ struct RecordsWorkspaceView: View {
                 }
             }
             .navigationTitle("New Note")
+            .inlineNavigationTitle()
         }
-        .presentationDetents([.medium])
+        #if os(iOS)
+        .presentationDetents([.medium, .large])
+        #else
+        .frame(minWidth: 350, minHeight: 400)
+        #endif
     }
 
     private func vitalsEntrySheet(entry: SmartVitalsEntry) -> some View {
@@ -472,11 +480,13 @@ struct RecordsWorkspaceView: View {
         return !currentBody.isEmpty && currentBody != note.type.defaultBody.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func autoDeleteEmptyNote(_ noteID: UUID?) {
-        guard let id = noteID,
-              let note = store.notes.first(where: { $0.id == id }) else { return }
-        if note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            store.deleteNote(id)
+    private func autoDeleteEmptyNote(_ noteID: UUID) {
+        guard let note = store.notes.first(where: { $0.id == noteID }) else { return }
+        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultBody = note.type.defaultBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only auto-delete if body is completely empty OR still just the untouched template
+        if body.isEmpty || body == defaultBody {
+            store.deleteNote(noteID)
         }
     }
 
