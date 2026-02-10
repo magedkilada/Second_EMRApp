@@ -182,61 +182,59 @@ struct PhysicianRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        Button { onSelect() } label: {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(physician.name)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(physician.name)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
 
-                    if !physician.specialty.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "stethoscope")
-                                .font(.caption2)
-                            Text(physician.specialty)
-                                .font(.subheadline)
-                        }
-                        .foregroundStyle(.secondary)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        if !physician.clinic.isEmpty {
-                            Label(physician.clinic, systemImage: "building.2")
-                                .font(.caption)
-                        }
-
-                        if !physician.phone.isEmpty {
-                            Label(physician.phone, systemImage: "phone")
-                                .font(.caption)
-                        }
-
-                        if !physician.email.isEmpty {
-                            Label(physician.email, systemImage: "envelope")
-                                .font(.caption)
-                        }
+                if !physician.specialty.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "stethoscope")
+                            .font(.caption2)
+                        Text(physician.specialty)
+                            .font(.subheadline)
                     }
                     .foregroundStyle(.secondary)
                 }
 
-                Spacer()
+                VStack(alignment: .leading, spacing: 4) {
+                    if !physician.clinic.isEmpty {
+                        Label(physician.clinic, systemImage: "building.2")
+                            .font(.caption)
+                    }
 
-                Button { onEdit() } label: {
-                    Image(systemName: "pencil.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
+                    if !physician.phone.isEmpty {
+                        Label(physician.phone, systemImage: "phone")
+                            .font(.caption)
+                    }
 
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.title3)
+                    if !physician.email.isEmpty {
+                        Label(physician.email, systemImage: "envelope")
+                            .font(.caption)
+                    }
                 }
+                .foregroundStyle(.secondary)
             }
-            .padding(.vertical, 8)
             .contentShape(Rectangle())
+            .onTapGesture { onSelect() }
+
+            Spacer()
+
+            Button { onEdit() } label: {
+                Image(systemName: "pencil.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.blue)
+            }
+            .buttonStyle(.borderless)
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.title3)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 8)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) { onDelete() } label: {
                 Label("Delete", systemImage: "trash")
