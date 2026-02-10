@@ -4,48 +4,84 @@ struct PhysiciansManagerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: PhysiciansStore
 
-    enum Destination: Hashable {
+    enum Mode: Equatable {
+        case list
         case add
         case edit(Physician)
     }
 
-    @State private var path: [Destination] = []
+    @State private var mode: Mode = .list
     @State private var confirmDelete: Physician? = nil
-    @State private var showCantDeleteLast = false
+
+    // Edit/Add form fields
+    @State private var formName = ""
+    @State private var formSpecialty = ""
+    @State private var formClinic = ""
+    @State private var formPhone = ""
+    @State private var formEmail = ""
+    @State private var formID: UUID = UUID()
 
     var body: some View {
-        NavigationStack(path: $path) {
-            physiciansList
-                .navigationTitle("Physicians")
-                .toolbar { toolbarContent }
-                .navigationDestination(for: Destination.self) { dest in
-                    switch dest {
-                    case .add:
-                        AddPhysicianForm { newPhysician in
-                            store.add(newPhysician)
-                            path.removeLast()
-                        }
-                    case .edit(let physician):
-                        EditPhysicianForm(physician: physician) { updated in
-                            store.update(updated)
-                            path.removeLast()
+        NavigationStack {
+            Group {
+                switch mode {
+                case .list:
+                    physiciansList
+                case .add:
+                    physicianForm(title: "New Physician", buttonLabel: "Add") {
+                        let physician = Physician(
+                            name: formName,
+                            specialty: formSpecialty,
+                            clinic: formClinic,
+                            phone: formPhone,
+                            email: formEmail
+                        )
+                        store.add(physician)
+                        mode = .list
+                    }
+                case .edit:
+                    physicianForm(title: "Edit Physician", buttonLabel: "Save") {
+                        let physician = Physician(
+                            id: formID,
+                            name: formName,
+                            specialty: formSpecialty,
+                            clinic: formClinic,
+                            phone: formPhone,
+                            email: formEmail
+                        )
+                        store.update(physician)
+                        mode = .list
+                    }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(mode == .list ? "Done" : "Back") {
+                        if mode == .list {
+                            dismiss()
+                        } else {
+                            mode = .list
                         }
                     }
                 }
+
+                if mode == .list {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button { startAdd() } label: {
+                            Image(systemName: "plus")
+                        }
+                    }
+                }
+            }
         }
         .alert("Delete physician?", isPresented: deleteAlert) {
             deleteAlertButtons
         } message: {
-            deleteAlertMessage
-        }
-        .alert("Cannot delete", isPresented: $showCantDeleteLast) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("You must keep at least one physician in the list.")
+            Text("This will remove the physician from your list.")
         }
     }
 
-    // MARK: - Sub-Views
+    // MARK: - List View
 
     private var physiciansList: some View {
         List {
@@ -57,24 +93,65 @@ struct PhysiciansManagerView: View {
                         store.selectedPhysicianID = physician.id
                         store.save()
                     },
-                    onEdit: { path.append(.edit(physician)) },
-                    onDelete: { requestDelete(physician) }
+                    onEdit: { startEdit(physician) },
+                    onDelete: { confirmDelete = physician }
                 )
             }
         }
+        .navigationTitle("Physicians")
     }
 
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button("Done") { dismiss() }
-        }
+    // MARK: - Form View
 
-        ToolbarItem(placement: .confirmationAction) {
-            Button { path.append(.add) } label: {
-                Image(systemName: "plus")
+    private func physicianForm(title: String, buttonLabel: String, onSubmit: @escaping () -> Void) -> some View {
+        Form {
+            Section("Required") {
+                TextField("Name *", text: $formName)
+            }
+
+            Section("Professional Details") {
+                TextField("Specialty", text: $formSpecialty)
+                TextField("Clinic/Hospital", text: $formClinic)
+            }
+
+            Section("Contact Information") {
+                TextField("Phone", text: $formPhone)
+                    .mobileKeyboard(.phonePad)
+
+                TextField("Email", text: $formEmail)
+                    .mobileKeyboard(.emailAddress)
+                    .mobileAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+
+            Section {
+                Button(buttonLabel) { onSubmit() }
+                    .disabled(formName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+        .navigationTitle(title)
+    }
+
+    // MARK: - Helpers
+
+    private func startAdd() {
+        formName = ""
+        formSpecialty = ""
+        formClinic = ""
+        formPhone = ""
+        formEmail = ""
+        formID = UUID()
+        mode = .add
+    }
+
+    private func startEdit(_ physician: Physician) {
+        formName = physician.name
+        formSpecialty = physician.specialty
+        formClinic = physician.clinic
+        formPhone = physician.phone
+        formEmail = physician.email
+        formID = physician.id
+        mode = .edit(physician)
     }
 
     private var deleteAlert: Binding<Bool> {
@@ -92,20 +169,6 @@ struct PhysiciansManagerView: View {
         }
         Button("Cancel", role: .cancel) {
             confirmDelete = nil
-        }
-    }
-
-    private var deleteAlertMessage: some View {
-        Text("This will remove the physician from your list.")
-    }
-
-    // MARK: - Helpers
-
-    private func requestDelete(_ physician: Physician) {
-        if store.activePhysicians.count <= 1 {
-            showCantDeleteLast = true
-        } else {
-            confirmDelete = physician
         }
     }
 }
@@ -190,118 +253,6 @@ struct PhysicianRow: View {
             }
             Button(role: .destructive) { onDelete() } label: {
                 Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-}
-
-// MARK: - Add Physician Form (pushed via navigation)
-struct AddPhysicianForm: View {
-    @State private var name: String = ""
-    @State private var specialty: String = ""
-    @State private var clinic: String = ""
-    @State private var phone: String = ""
-    @State private var email: String = ""
-
-    let onAdd: (Physician) -> Void
-
-    var body: some View {
-        Form {
-            Section("Required") {
-                TextField("Name *", text: $name)
-            }
-
-            Section("Professional Details") {
-                TextField("Specialty", text: $specialty)
-                TextField("Clinic/Hospital", text: $clinic)
-            }
-
-            Section("Contact Information") {
-                TextField("Phone", text: $phone)
-                    .mobileKeyboard(.phonePad)
-
-                TextField("Email", text: $email)
-                    .mobileKeyboard(.emailAddress)
-                    .mobileAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            }
-        }
-        .navigationTitle("New Physician")
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Add") {
-                    let physician = Physician(
-                        name: name,
-                        specialty: specialty,
-                        clinic: clinic,
-                        phone: phone,
-                        email: email
-                    )
-                    onAdd(physician)
-                }
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-    }
-}
-
-// MARK: - Edit Physician Form (pushed via navigation)
-struct EditPhysicianForm: View {
-    @State private var id: UUID
-    @State private var name: String
-    @State private var specialty: String
-    @State private var clinic: String
-    @State private var phone: String
-    @State private var email: String
-
-    let onSave: (Physician) -> Void
-
-    init(physician: Physician, onSave: @escaping (Physician) -> Void) {
-        _id = State(initialValue: physician.id)
-        _name = State(initialValue: physician.name)
-        _specialty = State(initialValue: physician.specialty)
-        _clinic = State(initialValue: physician.clinic)
-        _phone = State(initialValue: physician.phone)
-        _email = State(initialValue: physician.email)
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        Form {
-            Section("Required") {
-                TextField("Name *", text: $name)
-            }
-
-            Section("Professional Details") {
-                TextField("Specialty", text: $specialty)
-                TextField("Clinic/Hospital", text: $clinic)
-            }
-
-            Section("Contact Information") {
-                TextField("Phone", text: $phone)
-                    .mobileKeyboard(.phonePad)
-
-                TextField("Email", text: $email)
-                    .mobileKeyboard(.emailAddress)
-                    .mobileAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            }
-        }
-        .navigationTitle("Edit Physician")
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save") {
-                    let physician = Physician(
-                        id: id,
-                        name: name,
-                        specialty: specialty,
-                        clinic: clinic,
-                        phone: phone,
-                        email: email
-                    )
-                    onSave(physician)
-                }
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }

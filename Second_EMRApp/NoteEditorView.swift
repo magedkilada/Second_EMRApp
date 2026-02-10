@@ -157,13 +157,9 @@ struct NoteEditorView: View {
             compactBtn("Print", icon: "printer", color: .gray) {
                 printCurrentNote()
             }
-            .contextMenu {
-                Button(action: printCurrentNote) {
-                    Label("Print This Note", systemImage: "printer")
-                }
-                Button(action: { showBatchPrintMenu = true }) {
-                    Label("Batch Print...", systemImage: "doc.on.doc")
-                }
+
+            compactBtn("Batch", icon: "doc.on.doc", color: .gray) {
+                showBatchPrintMenu = true
             }
 
             compactBtn("Share", icon: "square.and.arrow.up", color: .gray) {

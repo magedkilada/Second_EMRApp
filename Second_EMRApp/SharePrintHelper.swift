@@ -89,8 +89,16 @@ enum SharePrintPresenter {
         } else {
             return
         }
-        printOp?.jobTitle = jobName
-        printOp?.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
+        guard let op = printOp else { return }
+        op.jobTitle = jobName
+        op.showsPrintPanel = true
+        op.showsProgressPanel = true
+        // Use the first visible window — NSApp.keyWindow can be nil in SwiftUI
+        if let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) {
+            op.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        } else {
+            op.run()
+        }
     }
     #endif
 }
