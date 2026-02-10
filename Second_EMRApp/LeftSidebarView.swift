@@ -6,6 +6,8 @@ struct LeftSidebarView: View {
     @EnvironmentObject private var backupCenter: BackupCenter
     @EnvironmentObject private var referencesStore: ReferencesStore
     @EnvironmentObject private var appointmentStore: AppointmentStore
+    @EnvironmentObject private var syncManager: SyncManager
+    @EnvironmentObject private var supabaseManager: SupabaseManager
 
     @Binding var searchText: String
 
@@ -49,10 +51,14 @@ struct LeftSidebarView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 16) {
+                    // 0. Cloud sync status
+                    syncStatusBar
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+
                     // 1. Backup card
                     backupCard
                         .padding(.horizontal)
-                        .padding(.top, 8)
 
                     // 2. Physician card with edit/delete
                     physicianCard
@@ -186,6 +192,49 @@ struct LeftSidebarView: View {
     }
 
     // MARK: - Components
+
+    private var syncStatusBar: some View {
+        HStack(spacing: 8) {
+            if supabaseManager.isAuthenticated {
+                if syncManager.isSyncing {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Syncing...")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if syncManager.pendingChangesCount > 0 {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.orange)
+                    Text("\(syncManager.pendingChangesCount) pending")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Image(systemName: "checkmark.icloud.fill")
+                        .foregroundStyle(.green)
+                    Text("Cloud Synced")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            } else {
+                Image(systemName: "icloud.slash")
+                    .foregroundStyle(.red)
+                Text("Not signed in")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            Spacer()
+            if let error = syncManager.syncError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(Color.secondarySystemGroupedBg)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
 
     private var backupCard: some View {
         Button {

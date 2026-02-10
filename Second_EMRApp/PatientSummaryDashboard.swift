@@ -105,7 +105,10 @@ struct PatientSummaryDashboard: View {
                     .font(.title).bold()
 
                 if !patient.nameArabic.isEmpty {
-                    Text(patient.nameArabic).font(.title3).foregroundStyle(.secondary)
+                    Text(patient.nameArabic)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .environment(\.layoutDirection, .rightToLeft)
                 }
 
                 if let age = patient.ageString {

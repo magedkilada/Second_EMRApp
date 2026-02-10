@@ -28,6 +28,8 @@ struct DemographicsView: View {
                 if isEditing {
                     TextField("English Name", text: $editedNameEnglish)
                     TextField("Arabic Name", text: $editedNameArabic)
+                        .environment(\.layoutDirection, .rightToLeft)
+                        .multilineTextAlignment(.trailing)
                     TextField("MRN (letters + digits)", text: $editedMRN)
                         .mobileAutocapitalization(.characters)
                         .onChange(of: editedMRN) { _, newValue in
@@ -62,6 +64,7 @@ struct DemographicsView: View {
                             Spacer()
                             Text(patient.nameArabic)
                                 .foregroundColor(.secondary)
+                                .environment(\.layoutDirection, .rightToLeft)
                         }
                     }
                     HStack {

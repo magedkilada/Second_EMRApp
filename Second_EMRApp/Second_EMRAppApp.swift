@@ -1,5 +1,5 @@
 //
-//  Second_EMRAppApp.swift - COMPLETE with BackupCenter
+//  Second_EMRAppApp.swift - COMPLETE with BackupCenter + Supabase Cloud Sync
 //  Second_EMRApp
 //
 
@@ -16,6 +16,8 @@ struct Second_EMRAppApp: App {
     @StateObject private var backupCenter = BackupCenter()
     @StateObject private var referencesStore = ReferencesStore()
     @StateObject private var appointmentStore = AppointmentStore()
+    @StateObject private var supabaseManager = SupabaseManager.shared
+    @StateObject private var syncManager = SyncManager.shared
 
     init() {
         print("🚀 APP LAUNCHED")
@@ -29,7 +31,7 @@ struct Second_EMRAppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 // Inject objects into the environment so all subviews can access them
                 .environmentObject(store)
                 .environmentObject(physicians)
@@ -37,6 +39,8 @@ struct Second_EMRAppApp: App {
                 .environmentObject(backupCenter)
                 .environmentObject(referencesStore)
                 .environmentObject(appointmentStore)
+                .environmentObject(supabaseManager)
+                .environmentObject(syncManager)
                 .task {
                     // 1. Load WHO Growth Data
                     growthStore.loadBundleJSON(named: [
@@ -47,10 +51,10 @@ struct Second_EMRAppApp: App {
                         "who_0_2_headCircForAge_male",
                         "who_0_2_headCircForAge_female"
                     ])
-                    
+
                     // 2. Preload pediatric references
                     GrowthReferences.shared.preloadIfNeeded()
-                    
+
                     // 3. WIRE BACKUP CENTER + REFERENCES TO STORE
                     // This allows the store to trigger auto-backups during data saves
                     store.backupCenter = backupCenter
@@ -58,7 +62,41 @@ struct Second_EMRAppApp: App {
 
                     // 4. Start iCloud sync monitoring
                     iCloudSyncManager.shared.startMonitoring()
+
+                    // 5. Check Supabase session and pull latest data
+                    await supabaseManager.checkSession()
+
+                    // 6. Auto-sync: pull latest data from Supabase after login
+                    if supabaseManager.isAuthenticated {
+                        await syncManager.performFullSync(
+                            emrStore: store,
+                            appointmentStore: appointmentStore,
+                            physiciansStore: physicians,
+                            referencesStore: referencesStore
+                        )
+                    }
                 }
+        }
+    }
+}
+
+// MARK: - Root View (Auth Check)
+
+struct RootView: View {
+    @EnvironmentObject var supabaseManager: SupabaseManager
+
+    var body: some View {
+        Group {
+            if SupabaseConfig.isConfigured {
+                if supabaseManager.isAuthenticated {
+                    ContentView()
+                } else {
+                    AuthView()
+                }
+            } else {
+                // Supabase not configured - run in offline mode
+                ContentView()
+            }
         }
     }
 }

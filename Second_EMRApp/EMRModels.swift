@@ -30,6 +30,23 @@ public struct Patient: Identifiable, Codable, Hashable {
 
     public init() { }
 
+    // Map Swift camelCase to Supabase snake_case
+    enum CodingKeys: String, CodingKey {
+        case id
+        case nameEnglish = "name_english"
+        case nameArabic = "name_arabic"
+        case dob
+        case gender
+        case phone
+        case email
+        case mrn
+        case nationalID = "national_id"
+        case passport
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case isDeleted = "is_deleted"
+    }
+
     public var ageString: String? {
         let calendar = Calendar.current
         let now = Date()
@@ -222,6 +239,18 @@ public struct RecordNote: Identifiable, Codable, Hashable {
 
     public var displayTitle: String {
         type.headerTitle
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case patientID = "patient_id"
+        case type
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case body
+        case isFinalized = "is_finalized"
+        case finalizedAt = "finalized_at"
+        case isDeleted = "is_deleted"
     }
 }
 

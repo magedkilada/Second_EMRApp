@@ -13,12 +13,21 @@ struct Appointment: Identifiable, Codable, Hashable {
     var durationMinutes: Int
     var notes: String
     var createdAt: Date = Date()
-    
+
     init(patientID: UUID? = nil, startTime: Date, durationMinutes: Int = 15, notes: String = "") {
         self.patientID = patientID
         self.startTime = startTime
         self.durationMinutes = durationMinutes
         self.notes = notes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case patientID = "patient_id"
+        case startTime = "start_time"
+        case durationMinutes = "duration_minutes"
+        case notes
+        case createdAt = "created_at"
     }
 }
 
@@ -40,11 +49,15 @@ final class AppointmentStore: ObservableObject {
     func add(_ appointment: Appointment) {
         appointments.append(appointment)
         save()
+        // Cloud sync
+        SyncManager.shared.queueAppointmentChange(appointment, operation: .create)
     }
 
     func delete(id: UUID) {
         appointments.removeAll(where: { $0.id == id })
         save()
+        // Cloud sync
+        SyncManager.shared.queueChange(PendingChange(entityType: .appointment, entityId: id, operation: .delete))
     }
 
     func replaceAll(with newAppointments: [Appointment]) {

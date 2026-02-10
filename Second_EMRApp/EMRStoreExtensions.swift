@@ -13,6 +13,9 @@ extension EMRStore {
             patients[idx] = patient
             lastModified = Date()
             savePatients()
+
+            // Cloud sync
+            SyncManager.shared.queuePatientChange(patient, operation: .update)
         }
     }
     

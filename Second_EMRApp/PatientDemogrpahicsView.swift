@@ -29,6 +29,8 @@ struct PatientDemographicsView: View {
             Section("Name") {
                 TextField("Name (English) *", text: $patient.nameEnglish)
                 TextField("Name (Arabic)", text: $patient.nameArabic)
+                    .environment(\.layoutDirection, .rightToLeft)
+                    .multilineTextAlignment(.trailing)
             }
 
             Section("Date of Birth") {

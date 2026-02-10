@@ -8,11 +8,11 @@ import Combine
 
 public struct Physician: Identifiable, Codable, Hashable {
     public var id: UUID = UUID()
-    public var name: String
-    public var specialty: String
-    public var clinic: String
-    public var phone: String
-    public var email: String
+    public var name: String = ""
+    public var specialty: String = ""
+    public var clinic: String = ""
+    public var phone: String = ""
+    public var email: String = ""
 
     // Soft delete (per your rule)
     public var isDeleted: Bool = false
@@ -37,6 +37,11 @@ public struct Physician: Identifiable, Codable, Hashable {
 
     public var displayName: String {
         specialty.isEmpty ? name : "\(name) • \(specialty)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, specialty, clinic, phone, email
+        case isDeleted = "is_deleted"
     }
 }
 
@@ -86,12 +91,16 @@ public final class PhysiciansStore: ObservableObject {
         physicians.insert(physician, at: 0)
         selectedPhysicianID = physician.id
         save()
+        // Cloud sync
+        SyncManager.shared.queuePhysicianChange(physician, operation: .create)
     }
 
     public func update(_ physician: Physician) {
         guard let idx = physicians.firstIndex(where: { $0.id == physician.id }) else { return }
         physicians[idx] = physician
         save()
+        // Cloud sync
+        SyncManager.shared.queuePhysicianChange(physician, operation: .update)
     }
 
     // ✅ Soft delete (your rule)
@@ -102,6 +111,8 @@ public final class PhysiciansStore: ObservableObject {
             selectedPhysicianID = activePhysicians.first?.id
         }
         save()
+        // Cloud sync
+        SyncManager.shared.queuePhysicianChange(physicians[idx], operation: .update)
     }
 
     public func restore(_ id: UUID) {

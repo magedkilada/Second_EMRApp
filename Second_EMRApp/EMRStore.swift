@@ -77,10 +77,14 @@ final class EMRStore: ObservableObject {
         patients.insert(p, at: 0)
         selectedPatientID = p.id
         savePatients()
+
+        // Cloud sync
+        SyncManager.shared.queuePatientChange(p, operation: .create)
         return p
     }
 
     func savePatient(_ patient: Patient) {
+        let isNew = !patients.contains(where: { $0.id == patient.id })
         if let idx = patients.firstIndex(where: { $0.id == patient.id }) {
             patients[idx] = patient
         } else {
@@ -88,6 +92,9 @@ final class EMRStore: ObservableObject {
         }
         lastModified = Date()
         savePatients()
+
+        // Cloud sync
+        SyncManager.shared.queuePatientChange(patient, operation: isNew ? .create : .update)
     }
 
     func softDeletePatient(_ id: UUID) {
@@ -100,6 +107,9 @@ final class EMRStore: ObservableObject {
 
         lastModified = Date()
         savePatients()
+
+        // Cloud sync
+        SyncManager.shared.queuePatientChange(patients[idx], operation: .update)
     }
 
     func replaceAllPatients(with newPatients: [Patient]) {
@@ -130,10 +140,14 @@ final class EMRStore: ObservableObject {
         selectedNoteID = note.id
         lastModified = Date()
         saveNotes()
+
+        // Cloud sync
+        SyncManager.shared.queueNoteChange(note, operation: .create)
         return note
     }
 
     func saveNote(_ note: RecordNote) {
+        let isNew = !notes.contains(where: { $0.id == note.id })
         if let idx = notes.firstIndex(where: { $0.id == note.id }) {
             notes[idx] = note
         } else {
@@ -141,6 +155,9 @@ final class EMRStore: ObservableObject {
         }
         lastModified = Date()
         saveNotes()
+
+        // Cloud sync
+        SyncManager.shared.queueNoteChange(note, operation: isNew ? .create : .update)
     }
     
 
@@ -149,6 +166,9 @@ final class EMRStore: ObservableObject {
         if selectedNoteID == id { selectedNoteID = notes.first?.id }
         lastModified = Date()
         saveNotes()
+
+        // Cloud sync
+        SyncManager.shared.queueChange(PendingChange(entityType: .note, entityId: id, operation: .delete))
     }
 
     // MARK: - Public API (Attachments)
@@ -340,7 +360,7 @@ final class EMRStore: ObservableObject {
         if let idx = vitals.enumerated()
             .filter({ $0.element.patientID == entry.patientID })
             .max(by: { $0.element.recordedAt < $1.element.recordedAt })?.offset {
-            
+
             let last = vitals[idx]
             let dt = abs(last.recordedAt.timeIntervalSince(entry.recordedAt))
 
@@ -350,6 +370,9 @@ final class EMRStore: ObservableObject {
                 vitals[idx] = updated
                 lastModified = Date()
                 saveVitals()
+
+                // Cloud sync
+                SyncManager.shared.queueVitalChange(updated, operation: .update)
                 return
             }
         }
@@ -357,15 +380,22 @@ final class EMRStore: ObservableObject {
         vitals.insert(entry, at: 0)
         lastModified = Date()
         saveVitals()
+
+        // Cloud sync
+        SyncManager.shared.queueVitalChange(entry, operation: .create)
     }
 
     public func deleteVitals(_ id: UUID) {
         vitals.removeAll(where: { $0.id == id })
         lastModified = Date()
         saveVitals()
+
+        // Cloud sync
+        SyncManager.shared.queueChange(PendingChange(entityType: .vital, entityId: id, operation: .delete))
     }
 
     public func upsertVitals(_ entry: SmartVitalsEntry) {
+        let isNew = !vitals.contains(where: { $0.id == entry.id })
         if let idx = vitals.firstIndex(where: { $0.id == entry.id }) {
             vitals[idx] = entry
         } else {
@@ -373,6 +403,9 @@ final class EMRStore: ObservableObject {
         }
         lastModified = Date()
         saveVitals()
+
+        // Cloud sync
+        SyncManager.shared.queueVitalChange(entry, operation: isNew ? .create : .update)
     }
 }
 

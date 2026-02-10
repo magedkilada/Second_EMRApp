@@ -5,8 +5,18 @@ struct PhysiciansManagerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: PhysiciansStore
 
-    @State private var showAdd = false
-    @State private var editing: Physician? = nil
+    enum SheetType: Identifiable {
+        case add
+        case edit(Physician)
+        var id: String {
+            switch self {
+            case .add: return "add"
+            case .edit(let p): return "edit-\(p.id)"
+            }
+        }
+    }
+
+    @State private var activeSheet: SheetType? = nil
     @State private var confirmDelete: Physician? = nil
     @State private var showCantDeleteLast = false
 
@@ -16,9 +26,13 @@ struct PhysiciansManagerView: View {
                 .navigationTitle("Physicians")
                 .toolbar { toolbarContent }
         }
-        .sheet(isPresented: $showAdd) { addPhysicianSheet }
-        .sheet(item: $editing) { physician in
-            editPhysicianSheet(physician)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .add:
+                addPhysicianSheet
+            case .edit(let physician):
+                editPhysicianSheet(physician)
+            }
         }
         .alert("Delete physician?", isPresented: deleteAlert) {
             deleteAlertButtons
@@ -44,7 +58,7 @@ struct PhysiciansManagerView: View {
                         store.selectedPhysicianID = physician.id
                         store.save()
                     },
-                    onEdit: { editing = physician },
+                    onEdit: { activeSheet = .edit(physician) },
                     onDelete: { requestDelete(physician) }
                 )
             }
@@ -58,7 +72,7 @@ struct PhysiciansManagerView: View {
         }
 
         ToolbarItem(placement: .confirmationAction) {
-            Button { showAdd = true } label: {
+            Button { activeSheet = .add } label: {
                 Image(systemName: "plus")
             }
         }
@@ -171,11 +185,19 @@ struct PhysicianRow: View {
             Button(role: .destructive) { onDelete() } label: {
                 Label("Delete", systemImage: "trash")
             }
-            
+
             Button { onEdit() } label: {
                 Label("Edit", systemImage: "pencil")
             }
             .tint(.blue)
+        }
+        .contextMenu {
+            Button { onEdit() } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            Button(role: .destructive) { onDelete() } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 }

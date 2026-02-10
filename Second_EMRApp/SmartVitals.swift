@@ -52,5 +52,19 @@ public struct SmartVitalsEntry: Identifiable, Codable, Hashable {
 
         return parts.isEmpty ? "" : "Vitals: " + parts.joined(separator: " | ")
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case patientID = "patient_id"
+        case recordedAt = "recorded_at"
+        case tempC = "temp_c"
+        case sbp, dbp, hr, spo2
+        case weightKg = "weight_kg"
+        case heightCm = "height_cm"
+        case headCircumferenceCm = "head_circ_cm"
+        case weightPercentile = "weight_percentile"
+        case heightPercentile = "height_percentile"
+        case headCircPercentile = "head_circ_percentile"
+    }
 }
 
