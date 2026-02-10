@@ -75,7 +75,12 @@ struct TranslateSheet: View {
                             Text("\(lang.rawValue) (\(lang.nativeName))").tag(lang)
                         }
                     }
+                    #if os(iOS)
+                    .pickerStyle(.wheel)
+                    .frame(height: 120)
+                    #else
                     .pickerStyle(.menu)
+                    #endif
                 }
                 .padding()
 
@@ -140,26 +145,24 @@ struct TranslateSheet: View {
                                 }
 
                                 // Translated text with RTL support
-                                VStack(alignment: isRTLLanguage ? .trailing : .leading) {
-                                    Text(translatedText)
-                                        .font(.body)
-                                        .textSelection(.enabled)
-                                        .multilineTextAlignment(isRTLLanguage ? .trailing : .leading)
-                                        .frame(maxWidth: .infinity, alignment: isRTLLanguage ? .trailing : .leading)
-                                }
-                                .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
-                                .padding()
-                                .background(Color.secondarySystemGroupedBg)
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                TextEditor(text: .constant(translatedText))
+                                    .font(.body)
+                                    .frame(minHeight: 200)
+                                    .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
+                                    .multilineTextAlignment(isRTLLanguage ? .trailing : .leading)
+                                    .padding(4)
+                                    .background(Color.secondarySystemGroupedBg)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
                                 // Disclaimer preview
                                 VStack(alignment: isRTLLanguage ? .trailing : .leading, spacing: 4) {
-                                    Text(disclaimer_en).font(.caption2).foregroundStyle(.orange)
-                                    VStack(alignment: .trailing) {
-                                        Text(disclaimer_target).font(.caption2).foregroundStyle(.orange)
-                                            .multilineTextAlignment(.trailing)
-                                    }
-                                    .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
+                                    Text(disclaimer_en)
+                                        .font(.caption2).foregroundStyle(.orange)
+                                    Text(disclaimer_target)
+                                        .font(.caption2).foregroundStyle(.orange)
+                                        .multilineTextAlignment(isRTLLanguage ? .trailing : .leading)
+                                        .frame(maxWidth: .infinity, alignment: isRTLLanguage ? .trailing : .leading)
+                                        .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
                                 }
                                 .padding(8)
                                 .background(Color.orange.opacity(0.1))

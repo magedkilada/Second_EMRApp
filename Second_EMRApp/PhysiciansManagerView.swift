@@ -81,21 +81,85 @@ struct PhysiciansManagerView: View {
         }
     }
 
-    // MARK: - List View
+    // MARK: - List View (ScrollView instead of List for macOS compatibility)
 
     private var physiciansList: some View {
-        List {
-            ForEach(store.activePhysicians) { physician in
-                PhysicianRow(
-                    physician: physician,
-                    isSelected: store.selectedPhysicianID == physician.id,
-                    onSelect: {
-                        store.selectedPhysicianID = physician.id
-                        store.save()
-                    },
-                    onEdit: { startEdit(physician) },
-                    onDelete: { confirmDelete = physician }
-                )
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(store.activePhysicians) { physician in
+                    VStack(spacing: 0) {
+                        HStack(spacing: 12) {
+                            // Physician info — tap to select
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(physician.name)
+                                    .font(.headline)
+
+                                if !physician.specialty.isEmpty {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "stethoscope")
+                                            .font(.caption2)
+                                        Text(physician.specialty)
+                                            .font(.subheadline)
+                                    }
+                                    .foregroundStyle(.secondary)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if !physician.clinic.isEmpty {
+                                        Label(physician.clinic, systemImage: "building.2")
+                                            .font(.caption)
+                                    }
+                                    if !physician.phone.isEmpty {
+                                        Label(physician.phone, systemImage: "phone")
+                                            .font(.caption)
+                                    }
+                                    if !physician.email.isEmpty {
+                                        Label(physician.email, systemImage: "envelope")
+                                            .font(.caption)
+                                    }
+                                }
+                                .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                store.selectedPhysicianID = physician.id
+                                store.save()
+                            }
+
+                            // Edit button
+                            Button {
+                                startEdit(physician)
+                            } label: {
+                                Image(systemName: "pencil.circle.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(.blue)
+                            }
+                            .buttonStyle(.plain)
+
+                            // Delete button
+                            Button {
+                                confirmDelete = physician
+                            } label: {
+                                Image(systemName: "trash.circle.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+
+                            // Selected checkmark
+                            if store.selectedPhysicianID == physician.id {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .font(.title2)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+
+                        Divider()
+                    }
+                }
             }
         }
         .navigationTitle("Physicians")
@@ -169,87 +233,6 @@ struct PhysiciansManagerView: View {
         }
         Button("Cancel", role: .cancel) {
             confirmDelete = nil
-        }
-    }
-}
-
-// MARK: - Supporting Row View
-struct PhysicianRow: View {
-    let physician: Physician
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(physician.name)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-
-                if !physician.specialty.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "stethoscope")
-                            .font(.caption2)
-                        Text(physician.specialty)
-                            .font(.subheadline)
-                    }
-                    .foregroundStyle(.secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    if !physician.clinic.isEmpty {
-                        Label(physician.clinic, systemImage: "building.2")
-                            .font(.caption)
-                    }
-
-                    if !physician.phone.isEmpty {
-                        Label(physician.phone, systemImage: "phone")
-                            .font(.caption)
-                    }
-
-                    if !physician.email.isEmpty {
-                        Label(physician.email, systemImage: "envelope")
-                            .font(.caption)
-                    }
-                }
-                .foregroundStyle(.secondary)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { onSelect() }
-
-            Spacer()
-
-            Image(systemName: "pencil.circle.fill")
-                .font(.title3)
-                .foregroundStyle(.blue)
-                .onTapGesture { onEdit() }
-
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.title3)
-            }
-        }
-        .padding(.vertical, 8)
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) { onDelete() } label: {
-                Label("Delete", systemImage: "trash")
-            }
-
-            Button { onEdit() } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-            .tint(.blue)
-        }
-        .contextMenu {
-            Button { onEdit() } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-            Button(role: .destructive) { onDelete() } label: {
-                Label("Delete", systemImage: "trash")
-            }
         }
     }
 }
