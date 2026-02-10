@@ -145,6 +145,7 @@ struct TranslateSheet: View {
                                 }
 
                                 // Translated text with RTL support
+                                #if os(iOS)
                                 TextEditor(text: .constant(translatedText))
                                     .font(.body)
                                     .frame(minHeight: 200)
@@ -153,6 +154,14 @@ struct TranslateSheet: View {
                                     .padding(4)
                                     .background(Color.secondarySystemGroupedBg)
                                     .clipShape(RoundedRectangle(cornerRadius: 10))
+                                #elseif os(macOS)
+                                MacTranslationTextView(
+                                    text: translatedText,
+                                    isRTL: isRTLLanguage
+                                )
+                                .frame(minHeight: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                #endif
 
                                 // Disclaimer preview
                                 VStack(alignment: isRTLLanguage ? .trailing : .leading, spacing: 4) {
@@ -249,3 +258,39 @@ struct TranslateSheet: View {
         onSave(note)
     }
 }
+
+// MARK: - macOS Native RTL Text View
+#if os(macOS)
+import AppKit
+
+struct MacTranslationTextView: NSViewRepresentable {
+    let text: String
+    let isRTL: Bool
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        let textView = scrollView.documentView as! NSTextView
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = NSFont.systemFont(ofSize: 14)
+        textView.textContainer?.widthTracksTextView = true
+        textView.drawsBackground = true
+        textView.backgroundColor = NSColor.controlBackgroundColor
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        textView.string = text
+        if isRTL {
+            textView.alignment = .right
+            textView.setBaseWritingDirection(.rightToLeft,
+                range: NSRange(location: 0, length: (text as NSString).length))
+        } else {
+            textView.alignment = .left
+            textView.setBaseWritingDirection(.leftToRight,
+                range: NSRange(location: 0, length: (text as NSString).length))
+        }
+    }
+}
+#endif
