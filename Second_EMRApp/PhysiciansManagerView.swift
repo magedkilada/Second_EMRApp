@@ -221,12 +221,10 @@ struct PhysicianRow: View {
 
             Spacer()
 
-            Button { onEdit() } label: {
-                Image(systemName: "pencil.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.blue)
-            }
-            .buttonStyle(.borderless)
+            Image(systemName: "pencil.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.blue)
+                .onTapGesture { onEdit() }
 
             if isSelected {
                 Image(systemName: "checkmark.circle.fill")

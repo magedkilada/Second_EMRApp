@@ -124,7 +124,7 @@ struct TranslateSheet: View {
 
                         // Translated result
                         if !translatedText.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: isRTLLanguage ? .trailing : .leading, spacing: 8) {
                                 HStack {
                                     Text("Translation (\(selectedLanguage.rawValue))").font(.headline)
                                     Spacer()
@@ -139,22 +139,27 @@ struct TranslateSheet: View {
                                     .tint(.secondary)
                                 }
 
-                                Text(translatedText)
-                                    .font(.body)
-                                    .textSelection(.enabled)
-                                    .multilineTextAlignment(isRTLLanguage ? .trailing : .leading)
-                                    .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
-                                    .frame(maxWidth: .infinity, alignment: isRTLLanguage ? .trailing : .leading)
-                                    .padding()
-                                    .background(Color.secondarySystemGroupedBg)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                // Translated text with RTL support
+                                VStack(alignment: isRTLLanguage ? .trailing : .leading) {
+                                    Text(translatedText)
+                                        .font(.body)
+                                        .textSelection(.enabled)
+                                        .multilineTextAlignment(isRTLLanguage ? .trailing : .leading)
+                                        .frame(maxWidth: .infinity, alignment: isRTLLanguage ? .trailing : .leading)
+                                }
+                                .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
+                                .padding()
+                                .background(Color.secondarySystemGroupedBg)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
 
                                 // Disclaimer preview
                                 VStack(alignment: isRTLLanguage ? .trailing : .leading, spacing: 4) {
                                     Text(disclaimer_en).font(.caption2).foregroundStyle(.orange)
-                                    Text(disclaimer_target).font(.caption2).foregroundStyle(.orange)
-                                        .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
-                                        .multilineTextAlignment(isRTLLanguage ? .trailing : .leading)
+                                    VStack(alignment: .trailing) {
+                                        Text(disclaimer_target).font(.caption2).foregroundStyle(.orange)
+                                            .multilineTextAlignment(.trailing)
+                                    }
+                                    .environment(\.layoutDirection, isRTLLanguage ? .rightToLeft : .leftToRight)
                                 }
                                 .padding(8)
                                 .background(Color.orange.opacity(0.1))
