@@ -170,10 +170,17 @@ struct PhysicianRow: View {
                 }
                 
                 Spacer()
-                
+
+                Button { onEdit() } label: {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.green)
                         .font(.title3)
                 }
             }
