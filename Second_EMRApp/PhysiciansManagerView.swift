@@ -1,38 +1,37 @@
 import SwiftUI
 
 struct PhysiciansManagerView: View {
-    // ✅ FIX: Correct @Environment syntax
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: PhysiciansStore
 
-    enum SheetType: Identifiable {
+    enum Destination: Hashable {
         case add
         case edit(Physician)
-        var id: String {
-            switch self {
-            case .add: return "add"
-            case .edit(let p): return "edit-\(p.id)"
-            }
-        }
     }
 
-    @State private var activeSheet: SheetType? = nil
+    @State private var path: [Destination] = []
     @State private var confirmDelete: Physician? = nil
     @State private var showCantDeleteLast = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             physiciansList
                 .navigationTitle("Physicians")
                 .toolbar { toolbarContent }
-        }
-        .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .add:
-                addPhysicianSheet
-            case .edit(let physician):
-                editPhysicianSheet(physician)
-            }
+                .navigationDestination(for: Destination.self) { dest in
+                    switch dest {
+                    case .add:
+                        AddPhysicianForm { newPhysician in
+                            store.add(newPhysician)
+                            path.removeLast()
+                        }
+                    case .edit(let physician):
+                        EditPhysicianForm(physician: physician) { updated in
+                            store.update(updated)
+                            path.removeLast()
+                        }
+                    }
+                }
         }
         .alert("Delete physician?", isPresented: deleteAlert) {
             deleteAlertButtons
@@ -50,7 +49,7 @@ struct PhysiciansManagerView: View {
 
     private var physiciansList: some View {
         List {
-            ForEach(store.physicians) { physician in
+            ForEach(store.activePhysicians) { physician in
                 PhysicianRow(
                     physician: physician,
                     isSelected: store.selectedPhysicianID == physician.id,
@@ -58,7 +57,7 @@ struct PhysiciansManagerView: View {
                         store.selectedPhysicianID = physician.id
                         store.save()
                     },
-                    onEdit: { activeSheet = .edit(physician) },
+                    onEdit: { path.append(.edit(physician)) },
                     onDelete: { requestDelete(physician) }
                 )
             }
@@ -72,21 +71,9 @@ struct PhysiciansManagerView: View {
         }
 
         ToolbarItem(placement: .confirmationAction) {
-            Button { activeSheet = .add } label: {
+            Button { path.append(.add) } label: {
                 Image(systemName: "plus")
             }
-        }
-    }
-
-    private var addPhysicianSheet: some View {
-        AddPhysicianView { newPhysician in
-            store.add(newPhysician)
-        }
-    }
-
-    private func editPhysicianSheet(_ physician: Physician) -> some View {
-        EditPhysicianView(physician: physician) { updated in
-            store.update(updated)
         }
     }
 
@@ -100,7 +87,6 @@ struct PhysiciansManagerView: View {
     @ViewBuilder
     private var deleteAlertButtons: some View {
         Button("Delete", role: .destructive) {
-            // ✅ FIX: Use softDelete to match store and UI screenshot
             if let p = confirmDelete { store.softDelete(p.id) }
             confirmDelete = nil
         }
@@ -116,7 +102,7 @@ struct PhysiciansManagerView: View {
     // MARK: - Helpers
 
     private func requestDelete(_ physician: Physician) {
-        if store.physicians.count <= 1 {
+        if store.activePhysicians.count <= 1 {
             showCantDeleteLast = true
         } else {
             confirmDelete = physician
@@ -139,7 +125,7 @@ struct PhysicianRow: View {
                     Text(physician.name)
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    
+
                     if !physician.specialty.isEmpty {
                         HStack(spacing: 6) {
                             Image(systemName: "stethoscope")
@@ -149,18 +135,18 @@ struct PhysicianRow: View {
                         }
                         .foregroundStyle(.secondary)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         if !physician.clinic.isEmpty {
                             Label(physician.clinic, systemImage: "building.2")
                                 .font(.caption)
                         }
-                        
+
                         if !physician.phone.isEmpty {
                             Label(physician.phone, systemImage: "phone")
                                 .font(.caption)
                         }
-                        
+
                         if !physician.email.isEmpty {
                             Label(physician.email, systemImage: "envelope")
                                 .font(.caption)
@@ -168,7 +154,7 @@ struct PhysicianRow: View {
                     }
                     .foregroundStyle(.secondary)
                 }
-                
+
                 Spacer()
 
                 Button { onEdit() } label: {
@@ -209,10 +195,8 @@ struct PhysicianRow: View {
     }
 }
 
-// MARK: - Action Sheets
-struct AddPhysicianView: View {
-    @Environment(\.dismiss) private var dismiss
-
+// MARK: - Add Physician Form (pushed via navigation)
+struct AddPhysicianForm: View {
     @State private var name: String = ""
     @State private var specialty: String = ""
     @State private var clinic: String = ""
@@ -222,55 +206,47 @@ struct AddPhysicianView: View {
     let onAdd: (Physician) -> Void
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Required") {
-                    TextField("Name *", text: $name)
-                }
-                
-                Section("Professional Details") {
-                    TextField("Specialty", text: $specialty)
-                    TextField("Clinic/Hospital", text: $clinic)
-                }
-                
-                Section("Contact Information") {
-                    TextField("Phone", text: $phone)
-                        .mobileKeyboard(.phonePad)
-
-                    TextField("Email", text: $email)
-                        .mobileKeyboard(.emailAddress)
-                        .mobileAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
+        Form {
+            Section("Required") {
+                TextField("Name *", text: $name)
             }
-            .navigationTitle("New Physician")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+
+            Section("Professional Details") {
+                TextField("Specialty", text: $specialty)
+                TextField("Clinic/Hospital", text: $clinic)
+            }
+
+            Section("Contact Information") {
+                TextField("Phone", text: $phone)
+                    .mobileKeyboard(.phonePad)
+
+                TextField("Email", text: $email)
+                    .mobileKeyboard(.emailAddress)
+                    .mobileAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+        }
+        .navigationTitle("New Physician")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Add") {
+                    let physician = Physician(
+                        name: name,
+                        specialty: specialty,
+                        clinic: clinic,
+                        phone: phone,
+                        email: email
+                    )
+                    onAdd(physician)
                 }
-                
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        let physician = Physician(
-                            name: name,
-                            specialty: specialty,
-                            clinic: clinic,
-                            phone: phone,
-                            email: email
-                        )
-                        onAdd(physician)
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }
 }
 
-struct EditPhysicianView: View {
-    @Environment(\.dismiss) private var dismiss
-
+// MARK: - Edit Physician Form (pushed via navigation)
+struct EditPhysicianForm: View {
     @State private var id: UUID
     @State private var name: String
     @State private var specialty: String
@@ -291,50 +267,42 @@ struct EditPhysicianView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Required") {
-                    TextField("Name *", text: $name)
-                }
-                
-                Section("Professional Details") {
-                    TextField("Specialty", text: $specialty)
-                    TextField("Clinic/Hospital", text: $clinic)
-                }
-                
-                Section("Contact Information") {
-                    TextField("Phone", text: $phone)
-                        .mobileKeyboard(.phonePad)
-
-                    TextField("Email", text: $email)
-                        .mobileKeyboard(.emailAddress)
-                        .mobileAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
+        Form {
+            Section("Required") {
+                TextField("Name *", text: $name)
             }
-            .navigationTitle("Edit Physician")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+
+            Section("Professional Details") {
+                TextField("Specialty", text: $specialty)
+                TextField("Clinic/Hospital", text: $clinic)
+            }
+
+            Section("Contact Information") {
+                TextField("Phone", text: $phone)
+                    .mobileKeyboard(.phonePad)
+
+                TextField("Email", text: $email)
+                    .mobileKeyboard(.emailAddress)
+                    .mobileAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+        }
+        .navigationTitle("Edit Physician")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    let physician = Physician(
+                        id: id,
+                        name: name,
+                        specialty: specialty,
+                        clinic: clinic,
+                        phone: phone,
+                        email: email
+                    )
+                    onSave(physician)
                 }
-                
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let physician = Physician(
-                            id: id,
-                            name: name,
-                            specialty: specialty,
-                            clinic: clinic,
-                            phone: phone,
-                            email: email
-                        )
-                        onSave(physician)
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }
 }
-
